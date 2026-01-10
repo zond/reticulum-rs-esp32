@@ -1,0 +1,27 @@
+[package]
+name = "reticulum-rs-esp32"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+# ESP-IDF framework
+esp-idf-sys = { version = "0.36", features = ["binstart"] }
+esp-idf-svc = { version = "0.51", features = ["alloc"] }
+esp-idf-hal = "0.45"
+
+# Reticulum-rs - the main goal (using fork with ESP32 compatibility patches)
+reticulum = { git = "https://github.com/zond/Reticulum-rs", branch = "esp32-compat", default-features = false, features = ["alloc"] }
+
+# Logging
+log = "0.4"
+
+[build-dependencies]
+embuild = "0.33"
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"

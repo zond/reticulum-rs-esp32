@@ -1,0 +1,16 @@
+[build]
+target = "xtensa-esp32s3-espidf"
+rustflags = [
+    "--cfg", "mio_unsupported_force_poll_poll",
+    "-C", "default-linker-libraries",
+]
+
+[target.xtensa-esp32s3-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor"
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+ESP_IDF_VERSION = "v5.2"
