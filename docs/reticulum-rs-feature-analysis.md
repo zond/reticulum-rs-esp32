@@ -8,14 +8,40 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 
 ### Critical Gaps for This Project
 
-| Feature | Status | Impact |
-|---------|--------|--------|
-| LoRa/RNode Interface | Missing | **BLOCKER** - Need to implement SX1262 driver |
-| BLE Interface | Missing | **BLOCKER** - Custom implementation needed |
-| Channel System | Not implemented | High - Needed for reliable messaging |
-| Resource System | Not implemented | Medium - Needed for file transfer |
-| Ratcheting (Forward Secrecy) | Missing | Medium - Security feature |
-| Group Destinations | Incomplete | Low - Not critical for initial goals |
+| Feature | Status | Impact | Scope |
+|---------|--------|--------|-------|
+| LoRa Interface (SX1262) | Missing | **BLOCKER** | This project |
+| BLE Interface | Missing | **BLOCKER** | This project |
+| Identity Persistence | Missing | **HIGH** | This project |
+| Bandwidth/Airtime Limiting | Missing | **HIGH** (for LoRa) | This project |
+
+### Out of Scope (Endpoint Features)
+
+These features are end-to-end between endpoints, not needed for transport nodes:
+
+| Feature | Reason |
+|---------|--------|
+| **Destinations** | Creating/managing destinations is endpoint concern; we route by hash |
+| **Links** | End-to-end encrypted sessions; we just forward Link packets |
+| **Channels** | Reliability is endpoint-to-endpoint over Links |
+| **Buffers** | Depends on Channels |
+| **Resources** | File transfer over Links |
+| **Ratcheting** | Payload encryption at endpoints |
+| **Group Destinations** | Endpoints create/join groups |
+| **Identity recall/remember** | Tracking other identities is endpoint concern |
+| **Identity blacklist** | Blocking senders is endpoint concern |
+| **Request Handlers** | Application callbacks |
+
+**Key insight**: A transport node is essentially a packet router. It forwards encrypted packets based on destination hash without understanding or participating in the higher-level protocols (Links, Channels, etc.) that run end-to-end between communicating parties.
+
+### Not Relevant for This Project
+
+| Feature | Reason |
+|---------|--------|
+| KISS Protocol | We talk directly to SX1262 via SPI, not to external RNode |
+| Serial Interface | Not connecting to serial devices |
+| I2P Interface | Not relevant for embedded |
+| AutoInterface | Using TCP to known testnet nodes |
 
 ---
 
@@ -52,7 +78,7 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Ratcheting | Complete | **Missing** | Forward secrecy per-destination |
 | Ratchet enforcement | Complete | **Missing** | |
 
-**Assessment**: Core crypto is complete. Ratcheting (forward secrecy) is missing but not critical for initial implementation.
+**Assessment**: Core crypto is complete. Ratcheting is missing in reticulum-rs but not needed for transport nodes (endpoints handle encryption).
 
 ---
 
@@ -67,7 +93,7 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Identity recall/remember | Complete | **Missing** | No caching system |
 | Identity blacklist | Complete | **Missing** | |
 
-**Assessment**: Core identity works. Persistence and caching would be useful additions.
+**Assessment**: Core identity works. For a transport node, we only need our OWN stable identity (for node addressing). Tracking other identities (recall/remember/blacklist) is an endpoint concern.
 
 ---
 
@@ -84,7 +110,7 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Encryption/Decryption | Complete | **Complete** | Per destination type |
 | Request handlers | Complete | **Missing** | Application callbacks |
 
-**Assessment**: Single and Plain destinations work. Group destinations need completion.
+**Assessment**: Destination creation and management is an **endpoint concern**. Transport nodes route packets by destination hash without creating destinations. This entire section is out of scope for our project.
 
 ---
 
@@ -119,7 +145,7 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Link identification | Complete | **Complete** | |
 | RSSI/SNR tracking | Complete | **Missing** | Radio quality metrics |
 
-**Assessment**: Link system is well-implemented. Minor cleanup TODOs remain.
+**Assessment**: The Link system is an **endpoint concern**. Links are end-to-end encrypted sessions between two communicating parties. Transport nodes forward Link Request/Proof/Data packets but don't participate in the handshake or maintain link state. This section is out of scope for our project.
 
 ---
 
@@ -134,7 +160,7 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Backpressure | Complete | **Missing** | |
 | Duplicate detection | Complete | **Missing** | |
 
-**Assessment**: **NOT IMPLEMENTED**. This is a significant gap for reliable messaging.
+**Assessment**: **NOT IMPLEMENTED** - but this is an **application-level feature**. Channels operate end-to-end over Links between communicating applications. Transport nodes just route the encrypted packets without participating in the Channel protocol. **Won't fix for this project.**
 
 ---
 
@@ -148,7 +174,7 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Bidirectional buffer | Complete | **Missing** | |
 | Compression | Complete | **Missing** | |
 
-**Assessment**: Reticulum-rs has utility buffers but not the stream abstraction layer.
+**Assessment**: Reticulum-rs has utility buffers but not the stream abstraction layer. This depends on Channels and is **application-level**. **Won't fix for this project.**
 
 ---
 
@@ -164,27 +190,28 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Progress tracking | Complete | **Missing** | |
 | Multi-segment | Complete | **Missing** | For >1MB |
 
-**Assessment**: **NOT IMPLEMENTED**. Contexts are defined but no transfer logic exists.
+**Assessment**: **NOT IMPLEMENTED**. Contexts are defined but no transfer logic exists. This is **application-level** - file transfers are end-to-end between applications, not a transport node concern. **Won't fix for this project.**
 
 ---
 
 ### 10. Interfaces
 
-| Interface | Python Reticulum | Reticulum-rs | Notes |
-|-----------|------------------|--------------|-------|
-| TCP Client | Complete | **Complete** | With reconnection |
-| TCP Server | Complete | **Complete** | |
-| UDP | Complete | **Complete** | |
-| HDLC Framing | Complete | **Complete** | |
-| KISS Framing | Complete | **Missing** | For RNode |
-| RNode (LoRa) | Complete | **Missing** | **Critical for this project** |
-| Serial | Complete | **Missing** | |
-| AutoInterface | Complete | **Missing** | Zero-conf discovery |
-| I2P | Complete | **Missing** | |
-| BLE | Not native | **Missing** | **Critical for this project** |
-| Kaonic gRPC | N/A | **Complete** | Rust-specific |
+| Interface | Python Reticulum | Reticulum-rs | Relevance for This Project |
+|-----------|------------------|--------------|---------------------------|
+| TCP Client | Complete | **Complete** | **YES** - testnet connection |
+| TCP Server | Complete | **Complete** | Maybe - if accepting connections |
+| UDP | Complete | **Complete** | Maybe |
+| HDLC Framing | Complete | **Complete** | YES - packet framing |
+| LoRa (SX1262) | Via RNode | **Missing** | **CRITICAL** - direct SPI driver needed |
+| BLE | Not native | **Missing** | **CRITICAL** - custom mesh protocol |
+| KISS Framing | Complete | **Missing** | Not needed - we use SPI directly |
+| RNode | Complete | **Missing** | Not needed - we ARE the radio |
+| Serial | Complete | **Missing** | Not needed |
+| AutoInterface | Complete | **Missing** | Not needed |
+| I2P | Complete | **Missing** | Not needed |
+| Kaonic gRPC | N/A | **Complete** | Disabled for ESP32 |
 
-**Assessment**: Only network interfaces implemented. **No radio or serial interfaces**.
+**Assessment**: TCP/UDP interfaces work and will be used for testnet connectivity. We need to implement **LoRa** (direct SX1262 driver) and **BLE** (custom mesh) interfaces.
 
 ---
 
@@ -207,99 +234,87 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 
 ## RNode Firmware Relevance
 
-RNode firmware is **not relevant for direct integration** because:
+RNode firmware is **not directly applicable** to our project because:
 
-1. **RNode is a separate device** - It's firmware for standalone LoRa radio devices that communicate with Reticulum via KISS protocol over serial/TCP/BLE.
+1. **RNode is a separate device** - Firmware for standalone LoRa radios that communicate with a host running Reticulum via KISS protocol.
 
-2. **We're building integrated firmware** - Our ESP32-S3 runs Reticulum directly with integrated LoRa, not as a separate radio peripheral.
+2. **We're building integrated firmware** - Our ESP32-S3 runs Reticulum directly with integrated LoRa. We don't need KISS because we talk to the SX1262 via SPI.
 
-3. **What we need from RNode knowledge**:
-   - KISS protocol format (for compatibility with existing RNode networks)
-   - LoRa parameter recommendations (SF, BW, CR settings)
-   - Airtime management strategies
-   - CSMA implementation
+**Useful reference material from RNode:**
+- LoRa parameter recommendations (SF, BW, CR settings for different scenarios)
+- Airtime management and duty cycle compliance
+- CSMA/CA implementation for collision avoidance
+- Frequency band regulations
 
 ---
 
 ## Recommendations for This Project
 
-### Phase 1: Core Functionality (Required)
+### Phase 1: Core Transport Node (Required)
 
 1. **Implement SX1262 LoRa Interface**
-   - Use `sx126x` or similar embedded-hal driver
-   - Implement as new interface type in reticulum-rs
-   - Support KISS framing for RNode compatibility
+   - Use embedded-hal SX1262 driver
+   - Implement as Reticulum Interface trait
    - Handle LoRa parameters (frequency, SF, BW, CR, power)
+   - Implement airtime limiting
 
 2. **Implement BLE Interface**
    - Use `esp32-nimble` for BLE stack
-   - Design custom BLE mesh protocol (inspired by ble-reticulum)
+   - Design custom mesh protocol (inspired by ble-reticulum)
    - This is NOT in upstream reticulum-rs - fully custom work
 
-3. **WiFi Interface**
+3. **WiFi/TCP Interface**
    - TCP client to testnet should work with existing code
    - May need ESP-IDF socket adaptations
 
-### Phase 2: Enhanced Features (Recommended)
+4. **Identity Persistence**
+   - Store device identity in ESP32 NVS (non-volatile storage)
+   - Essential for stable node identity across reboots
 
-4. **Implement Channel System**
-   - Required for reliable messaging applications
-   - ~500 lines of code based on Python reference
-   - Sequence numbers, windowing, retransmission
-
-5. **Add KISS Protocol Support**
-   - Enables compatibility with RNode devices
-   - Simple framing: FEND (0xC0), FESC (0xDB), TFEND (0xDC), TFESC (0xDD)
-
-6. **Identity Persistence**
-   - Store identities in ESP32 NVS (non-volatile storage)
-   - Essential for device restart continuity
-
-### Phase 3: Advanced Features (Optional)
-
-7. **Resource Transfer System**
-   - For file transfer capabilities
-   - Significant implementation effort
-
-8. **Ratcheting**
-   - Forward secrecy enhancement
-   - Lower priority for embedded use
-
-9. **Group Destinations**
-   - Complete the partial implementation
-   - Useful for broadcast scenarios
+5. **Bandwidth/Airtime Limiting**
+   - Critical for LoRa (duty cycle compliance)
+   - Per-interface airtime budgets
 
 ---
 
-## Upstream Contribution Opportunities
+## Potential Upstream Contributions
 
-Features we implement that could be contributed back to Reticulum-rs:
+If we implement something generally useful, consider contributing:
 
-1. **KISS protocol framing** - General utility
-2. **Channel implementation** - Core protocol feature
-3. **Resource implementation** - Core protocol feature
-4. **Serial interface** - Common use case
-5. **Identity persistence traits** - Abstraction for storage backends
+| Feature | Benefit |
+|---------|---------|
+| **Bandwidth Limiting** | Essential for radio interfaces |
+| **Identity Persistence Traits** | Abstraction for storage backends |
 
-Features that are ESP32-specific (keep in this project):
+ESP32-specific code stays in this project:
 
-1. **SX1262 LoRa interface** - Hardware-specific
-2. **BLE mesh interface** - Custom protocol
-3. **ESP-IDF integrations** - Platform-specific
+| Feature | Reason |
+|---------|--------|
+| **SX1262 LoRa interface** | Hardware-specific |
+| **BLE mesh interface** | Custom protocol, not in Reticulum spec |
+| **ESP-IDF integrations** | Platform-specific |
 
 ---
 
 ## Conclusion
 
-Reticulum-rs provides a solid foundation with:
+Reticulum-rs provides a solid foundation for a transport node:
 - Complete cryptography
 - Working packet/routing layer
 - Functional link establishment
-- Basic TCP/UDP interfaces
+- TCP/UDP interfaces (ready for testnet)
 
-Key work needed for our ESP32 project:
-1. **LoRa interface** - Must implement (~1000 lines estimated)
-2. **BLE interface** - Must implement (~1500 lines estimated, custom protocol)
-3. **Channel system** - Should implement for reliability (~500 lines)
+Key work needed for our ESP32 transport node:
 
-The existing code quality is good, with clear architecture and proper async patterns. The main gaps are in higher-level features (Channels, Resources) and hardware interfaces (LoRa, Serial, BLE).
+| Task | Estimate |
+|------|----------|
+| **LoRa interface (SX1262)** | ~800 lines |
+| **BLE interface** | ~1200 lines |
+| **Identity persistence** | ~200 lines |
+| **Bandwidth/airtime limiting** | ~200 lines |
+
+**Total: ~2400 lines of code**
+
+Many features (Channels, Resources, Ratcheting, Group Destinations) are **not needed** for a transport node - they're handled by endpoints. This significantly reduces our scope.
+
+The existing reticulum-rs code quality is good, with clear architecture and proper async patterns. Our work is focused on hardware interfaces (LoRa, BLE) and transport node essentials.
