@@ -16,6 +16,7 @@ Firmware for the LILYGO T3-S3 ESP32-S3 LoRa board that implements a Reticulum tr
 ## Dependencies
 
 - [Reticulum-rs](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) - Rust implementation of the Reticulum network stack
+  - Using [fork](https://github.com/zond/Reticulum-rs) with ESP32 compatibility patches ([PR #55](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs/pull/55), [PR #56](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs/pull/56))
 - [esp-idf-sys](https://github.com/esp-rs/esp-idf-sys) - Rust bindings to ESP-IDF
 - [ble-reticulum](https://github.com/torlando-tech/ble-reticulum) - Reference for BLE mesh implementation
 
