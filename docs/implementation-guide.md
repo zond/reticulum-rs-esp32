@@ -258,128 +258,181 @@ BLE MTU is typically 20-512 bytes (negotiated). For packets larger than BLE MTU:
 
 ## 3. Identity Persistence
 
-**Scope**: This project + upstream contribution
-**Estimate**: ~200 lines
+**Scope**: This project only (no upstream contribution needed)
+**Estimate**: ~50 lines
 **Priority**: HIGH
 
 ### Problem
 
 Currently, reticulum-rs has no identity persistence. Device gets new identity on every boot.
 
-### Solution: ESP32 NVS Storage
+### Solution: Simple NVS Functions
 
-Use ESP-IDF's Non-Volatile Storage (NVS) for persistent identity.
+Use simple functions instead of traits - more appropriate for an MVP and avoids over-engineering.
 
 ### Implementation Plan
 
 ```rust
 // src/persistence.rs
-use esp_idf_svc::nvs::{EspNvs, NvsDefault};
+use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
+use esp_idf_sys::EspError;
 use reticulum::identity::PrivateIdentity;
 
 const NVS_NAMESPACE: &str = "reticulum";
 const IDENTITY_KEY: &str = "device_id";
 
-pub struct IdentityStorage {
-    nvs: EspNvs<NvsDefault>,
+/// Load identity from NVS, returns None if not found or corrupted
+pub fn load_identity(nvs: &EspNvs<NvsDefault>) -> Option<PrivateIdentity> {
+    let mut buf = [0u8; 128]; // Ed25519 + X25519 keys fit in 128 bytes
+    nvs.get_raw(IDENTITY_KEY, &mut buf)
+        .ok()
+        .flatten()
+        .and_then(|bytes| PrivateIdentity::from_bytes(bytes).ok())
 }
 
-impl IdentityStorage {
-    pub fn new() -> Result<Self, Error> {
-        let nvs = EspNvs::new(NvsDefault, NVS_NAMESPACE)?;
-        Ok(Self { nvs })
+/// Save identity to NVS
+pub fn save_identity(
+    nvs: &mut EspNvs<NvsDefault>,
+    identity: &PrivateIdentity,
+) -> Result<(), EspError> {
+    nvs.set_raw(IDENTITY_KEY, &identity.to_bytes())
+}
+
+/// Load existing identity or create and persist a new one
+pub fn load_or_create_identity(
+    nvs: &mut EspNvs<NvsDefault>,
+) -> Result<PrivateIdentity, EspError> {
+    if let Some(identity) = load_identity(nvs) {
+        return Ok(identity);
     }
 
-    pub fn load_or_create(&mut self) -> Result<PrivateIdentity, Error> {
-        // Try to load existing identity
-        if let Ok(bytes) = self.nvs.get_blob(IDENTITY_KEY) {
-            if let Ok(identity) = PrivateIdentity::from_bytes(&bytes) {
-                return Ok(identity);
-            }
-        }
+    // Create new identity and persist
+    let identity = PrivateIdentity::new();
+    save_identity(nvs, &identity)?;
+    Ok(identity)
+}
 
-        // Create new identity and persist
-        let identity = PrivateIdentity::new();
-        let bytes = identity.to_bytes();
-        self.nvs.set_blob(IDENTITY_KEY, &bytes)?;
-        Ok(identity)
-    }
+/// Initialize NVS partition and namespace
+pub fn init_nvs() -> Result<EspNvs<NvsDefault>, EspError> {
+    let partition = EspNvsPartition::<NvsDefault>::take()?;
+    EspNvs::new(partition, NVS_NAMESPACE, true)
 }
 ```
 
-### Upstream Contribution: Storage Trait
-
-For upstream reticulum-rs, define a trait that different backends can implement:
+### Usage in main.rs
 
 ```rust
-// Proposed for reticulum-rs
-pub trait IdentityStorage {
-    fn load(&self, key: &str) -> Option<Vec<u8>>;
-    fn save(&mut self, key: &str, data: &[u8]) -> Result<(), Error>;
-    fn delete(&mut self, key: &str) -> Result<(), Error>;
+fn main() -> Result<()> {
+    let mut nvs = persistence::init_nvs()?;
+    let identity = persistence::load_or_create_identity(&mut nvs)?;
+    log::info!("Node identity: {:?}", identity.hash());
+    // ... rest of initialization
 }
 ```
-
-This allows:
-- ESP32: NVS implementation
-- Desktop: File-based implementation
-- Other embedded: Flash/EEPROM implementations
 
 ---
 
 ## 4. Bandwidth/Airtime Limiting
 
-**Scope**: Upstream contribution + this project
-**Estimate**: ~200 lines
+**Scope**: This project only (no upstream contribution needed)
+**Estimate**: ~100 lines
 **Priority**: HIGH (critical for LoRa)
 
 ### Why It Matters
 
 LoRa has legal duty cycle limits (e.g., 1% in EU 868 MHz band). Without airtime tracking, the device could violate regulations and cause interference.
 
+### Solution: Token Bucket Algorithm
+
+Using a token bucket instead of a sliding window:
+- O(1) memory (no VecDeque of transmission history)
+- O(1) operations (no cleanup loops)
+- Naturally handles the "refill over time" semantic of duty cycles
+- More lenient for bursty traffic
+
+**On errors**: When duty cycle is exceeded, we return an error and drop the packet. This is appropriate because Reticulum expects lossy networks and has built-in retry mechanisms. Better to drop packets than violate regulations.
+
 ### Implementation Plan
 
 ```rust
-// Add to interface management
-pub struct AirtimeLimiter {
-    /// Maximum airtime per hour (milliseconds)
-    max_airtime_ms: u64,
-    /// Sliding window of transmissions
-    transmissions: VecDeque<(Instant, u64)>, // (timestamp, duration_ms)
-    /// Current airtime usage in window
-    current_usage_ms: u64,
+// src/lora/duty_cycle.rs
+use std::time::{Duration, Instant};
+
+/// Duty cycle limiter using token bucket algorithm
+///
+/// Tracks airtime budget in microseconds. Budget refills continuously
+/// over the window duration, allowing for bursty transmissions as long
+/// as average duty cycle is maintained.
+pub struct DutyCycleLimiter {
+    /// Maximum budget in microseconds
+    budget_us: u64,
+    /// Remaining budget
+    remaining_us: u64,
+    /// Last refill time
+    last_refill: Instant,
+    /// Window duration for refill calculation
+    window: Duration,
 }
 
-impl AirtimeLimiter {
-    pub fn new(duty_cycle_percent: f32) -> Self {
-        // 1% duty cycle = 36000ms per hour
-        let max_airtime_ms = (3600_000.0 * duty_cycle_percent / 100.0) as u64;
+impl DutyCycleLimiter {
+    /// Create limiter for given duty cycle percentage over window
+    ///
+    /// # Arguments
+    /// * `duty_cycle_percent` - Duty cycle limit (e.g., 1.0 for 1%)
+    /// * `window` - Time window (e.g., 1 hour for EU regulations)
+    ///
+    /// # Example
+    /// ```
+    /// // 1% duty cycle over 1 hour (EU 868 MHz band)
+    /// let limiter = DutyCycleLimiter::new(1.0, Duration::from_secs(3600));
+    /// ```
+    pub fn new(duty_cycle_percent: f32, window: Duration) -> Self {
+        let budget_us = (window.as_micros() as f64 * duty_cycle_percent as f64 / 100.0) as u64;
         Self {
-            max_airtime_ms,
-            transmissions: VecDeque::new(),
-            current_usage_ms: 0,
+            budget_us,
+            remaining_us: budget_us,
+            last_refill: Instant::now(),
+            window,
         }
     }
 
-    pub fn can_transmit(&mut self, duration_ms: u64) -> bool {
-        self.cleanup_old_entries();
-        self.current_usage_ms + duration_ms <= self.max_airtime_ms
+    /// Check if transmission is allowed and consume budget if so
+    ///
+    /// Returns true if transmission was allowed, false if duty cycle exceeded.
+    pub fn try_consume(&mut self, airtime_us: u64) -> bool {
+        self.refill();
+        if self.remaining_us >= airtime_us {
+            self.remaining_us -= airtime_us;
+            true
+        } else {
+            false
+        }
     }
 
-    pub fn record_transmission(&mut self, duration_ms: u64) {
-        self.transmissions.push_back((Instant::now(), duration_ms));
-        self.current_usage_ms += duration_ms;
+    /// Get remaining budget in microseconds
+    pub fn remaining(&mut self) -> u64 {
+        self.refill();
+        self.remaining_us
     }
 
-    fn cleanup_old_entries(&mut self) {
-        let one_hour_ago = Instant::now() - Duration::from_secs(3600);
-        while let Some((timestamp, duration)) = self.transmissions.front() {
-            if *timestamp < one_hour_ago {
-                self.current_usage_ms -= duration;
-                self.transmissions.pop_front();
-            } else {
-                break;
-            }
+    /// Get remaining budget as percentage of total
+    pub fn remaining_percent(&mut self) -> f32 {
+        self.refill();
+        (self.remaining_us as f64 / self.budget_us as f64 * 100.0) as f32
+    }
+
+    fn refill(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill);
+
+        // Calculate how much budget to restore based on elapsed time
+        // Using u128 to avoid overflow in intermediate calculation
+        let refill_amount = (self.budget_us as u128 * elapsed.as_micros()
+            / self.window.as_micros()) as u64;
+
+        if refill_amount > 0 {
+            self.remaining_us = (self.remaining_us + refill_amount).min(self.budget_us);
+            self.last_refill = now;
         }
     }
 }
@@ -427,7 +480,7 @@ pub fn calculate_airtime(
 ```rust
 impl LoRaInterface {
     pub async fn transmit(&mut self, packet: &[u8]) -> Result<(), Error> {
-        let airtime = calculate_airtime(
+        let airtime_us = calculate_airtime_us(
             packet.len(),
             self.spreading_factor,
             self.bandwidth,
@@ -437,14 +490,16 @@ impl LoRaInterface {
             self.spreading_factor >= 11,
         );
 
-        if !self.airtime_limiter.can_transmit(airtime as u64) {
-            return Err(Error::AirtimeLimitExceeded);
+        if !self.duty_cycle.try_consume(airtime_us) {
+            log::warn!(
+                "Duty cycle exceeded, {}% remaining",
+                self.duty_cycle.remaining_percent()
+            );
+            return Err(Error::DutyCycleExceeded);
         }
 
         // Actual transmission
         self.radio.transmit(packet)?;
-
-        self.airtime_limiter.record_transmission(airtime as u64);
         Ok(())
     }
 }
@@ -452,12 +507,11 @@ impl LoRaInterface {
 
 ### Key Implementation Tasks
 
-1. **Add AirtimeLimiter struct** with sliding window tracking
-2. **Implement time-on-air calculation** for LoRa
+1. **Add DutyCycleLimiter** using token bucket algorithm
+2. **Implement time-on-air calculation** for LoRa (returns microseconds)
 3. **Integrate with LoRa interface** transmit path
-4. **Add configurable duty cycle** per region
-5. **Expose airtime statistics** for monitoring
-6. **Consider upstream abstraction** for other radio interfaces
+4. **Add configurable duty cycle** per region (1% EU, 10% US, etc.)
+5. **Log airtime statistics** for debugging
 
 ---
 
@@ -486,4 +540,12 @@ BLE Interface (independent)
 
 ### Total Estimate
 
-~2400 lines of new code for a complete transport node.
+| Component | Lines |
+|-----------|-------|
+| LoRa Interface (SX1262) | ~800 |
+| BLE Interface | ~1200 |
+| Identity Persistence | ~50 |
+| Airtime Limiting | ~100 |
+| **Total** | **~2150** |
+
+Reduced from original ~2400 estimate after simplifying persistence and rate limiting based on agent review.

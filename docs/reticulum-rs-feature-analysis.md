@@ -277,22 +277,17 @@ RNode firmware is **not directly applicable** to our project because:
 
 ---
 
-## Potential Upstream Contributions
+## Implementation Scope
 
-If we implement something generally useful, consider contributing:
-
-| Feature | Benefit |
-|---------|---------|
-| **Bandwidth Limiting** | Essential for radio interfaces |
-| **Identity Persistence Traits** | Abstraction for storage backends |
-
-ESP32-specific code stays in this project:
+All code stays in this project (no upstream contributions needed):
 
 | Feature | Reason |
 |---------|--------|
 | **SX1262 LoRa interface** | Hardware-specific |
 | **BLE mesh interface** | Custom protocol, not in Reticulum spec |
 | **ESP-IDF integrations** | Platform-specific |
+| **Identity persistence** | Simple functions, not a trait |
+| **Airtime limiting** | LoRa-specific token bucket |
 
 ---
 
@@ -310,10 +305,10 @@ Key work needed for our ESP32 transport node:
 |------|----------|
 | **LoRa interface (SX1262)** | ~800 lines |
 | **BLE interface** | ~1200 lines |
-| **Identity persistence** | ~200 lines |
-| **Bandwidth/airtime limiting** | ~200 lines |
+| **Identity persistence** | ~50 lines |
+| **Airtime limiting** | ~100 lines |
 
-**Total: ~2400 lines of code**
+**Total: ~2150 lines of code**
 
 Many features (Channels, Resources, Ratcheting, Group Destinations) are **not needed** for a transport node - they're handled by endpoints. This significantly reduces our scope.
 
