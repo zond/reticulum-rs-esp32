@@ -42,11 +42,11 @@ cargo build --release
 # Flash to device
 cargo espflash flash --release --monitor
 
-# Run tests (host)
-cargo test
+# Run tests on host (requires explicit target to override ESP32 default)
+cargo test --no-default-features --target x86_64-apple-darwin
 
 # Lint and format
-cargo clippy -- -D warnings
+cargo clippy --no-default-features --target x86_64-apple-darwin -- -D warnings
 cargo fmt
 ```
 
