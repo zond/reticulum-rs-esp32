@@ -20,6 +20,7 @@ esp32 = [
     "dep:esp-idf-hal",
     "dep:esp32-nimble",
     "dep:reticulum",
+    "dep:rand_core",
 ]
 
 [dependencies]
@@ -33,6 +34,9 @@ esp32-nimble = { version = "0.11", optional = true }
 
 # Reticulum-rs (using fork with ESP32 compatibility patches)
 reticulum = { git = "https://github.com/zond/Reticulum-rs", branch = "esp32-compat", default-features = false, features = ["alloc"], optional = true }
+
+# Random number generation (for identity creation, only for esp32 target)
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 
 # Logging
 log = "0.4"

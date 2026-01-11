@@ -5,6 +5,8 @@
 
 pub mod ble;
 pub mod lora;
+#[cfg(feature = "esp32")]
+pub mod persistence;
 pub mod wifi;
 
 // Re-export commonly used items

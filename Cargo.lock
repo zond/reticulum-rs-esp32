@@ -1440,6 +1440,7 @@ dependencies = [
  "esp-idf-sys",
  "esp32-nimble",
  "log",
+ "rand_core",
  "reticulum",
 ]
 

@@ -10,6 +10,9 @@
 4. Check if any files in the docs directory need update
 5. Review with the code-simplifier agent
 6. Review with the rust-code-guardian agent
+7. If the code-simplifier or rust-code-guardian identifies reasonable
+   things to fix in the future, please add to a docs file or TODO
+   comments.
 
 ### Commit Standards
 
