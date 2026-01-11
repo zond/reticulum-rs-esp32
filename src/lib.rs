@@ -5,7 +5,9 @@
 
 pub mod ble;
 pub mod lora;
+pub mod wifi;
 
 // Re-export commonly used items
 pub use ble::{Fragment, FragmentError, Fragmenter, Reassembler};
 pub use lora::{calculate_airtime_ms, calculate_airtime_us, DutyCycleLimiter, LoRaParams};
+pub use wifi::{ConfigCommand, ConfigError, WifiConfig, WifiStatus};

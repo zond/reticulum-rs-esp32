@@ -18,6 +18,7 @@ esp32 = [
     "dep:esp-idf-sys",
     "dep:esp-idf-svc",
     "dep:esp-idf-hal",
+    "dep:esp32-nimble",
     "dep:reticulum",
 ]
 
@@ -26,6 +27,9 @@ esp32 = [
 esp-idf-sys = { version = "0.36", features = ["binstart"], optional = true }
 esp-idf-svc = { version = "0.51", features = ["alloc"], optional = true }
 esp-idf-hal = { version = "0.45", optional = true }
+
+# BLE support (only for esp32 target)
+esp32-nimble = { version = "0.11", optional = true }
 
 # Reticulum-rs (using fork with ESP32 compatibility patches)
 reticulum = { git = "https://github.com/zond/Reticulum-rs", branch = "esp32-compat", default-features = false, features = ["alloc"], optional = true }
