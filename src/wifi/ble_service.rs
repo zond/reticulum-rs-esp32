@@ -12,11 +12,28 @@
 //! ├── Password (Write) - Network password
 //! └── Command (Write) - Control commands (connect/disconnect/clear)
 //! ```
+//!
+//! # Security Considerations
+//!
+//! - **Link-layer encryption**: BLE communication uses link-layer encryption after
+//!   pairing, but WiFi credentials are transmitted as plaintext at the application
+//!   layer within that encrypted channel.
+//!
+//! - **Pairing environment**: Configuration should be performed in a physically
+//!   secure environment. An attacker within BLE range (~10m) could potentially
+//!   intercept credentials during initial setup before pairing is complete.
+//!
+//! - **Production hardening**: For production deployments, consider:
+//!   - Enabling BLE pairing with PIN authentication
+//!   - Adding out-of-band authentication (e.g., QR code with shared secret)
+//!   - Disabling BLE advertising after successful WiFi connection
+//!   - Implementing a physical button requirement to enable configuration mode
 
-use super::config::{ConfigCommand, WifiConfig, WifiStatus};
+use super::config::{ConfigCommand, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN};
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{uuid128, BLEDevice, BLEServer, NimbleProperties};
 use std::sync::{Arc, Mutex};
+use zeroize::Zeroize;
 
 /// Custom UUID for WiFi Configuration Service.
 /// Generated: https://www.uuidgenerator.net/
@@ -86,9 +103,18 @@ impl WifiConfigService {
             char.set_value(ssid.as_bytes());
         });
         ssid_char.lock().on_write(move |args| {
-            if let Ok(s) = String::from_utf8(args.recv_data().to_vec()) {
-                let mut ssid = ssid_clone.lock().unwrap();
-                *ssid = s;
+            let data = args.recv_data();
+            // Reject oversized data before allocating (prevents memory exhaustion)
+            if data.len() > MAX_SSID_LEN {
+                log::warn!("Rejected oversized SSID: {} bytes", data.len());
+                return;
+            }
+            match String::from_utf8(data.to_vec()) {
+                Ok(s) => {
+                    let mut ssid = ssid_clone.lock().unwrap();
+                    *ssid = s;
+                }
+                Err(e) => log::warn!("SSID write rejected: invalid UTF-8: {}", e),
             }
         });
 
@@ -98,9 +124,18 @@ impl WifiConfigService {
             .lock()
             .create_characteristic(PASSWORD_CHAR_UUID, NimbleProperties::WRITE);
         password_char.lock().on_write(move |args| {
-            if let Ok(s) = String::from_utf8(args.recv_data().to_vec()) {
-                let mut password = password_clone.lock().unwrap();
-                *password = s;
+            let data = args.recv_data();
+            // Reject oversized data before allocating (prevents memory exhaustion)
+            if data.len() > MAX_PASSWORD_LEN {
+                log::warn!("Rejected oversized password: {} bytes", data.len());
+                return;
+            }
+            match String::from_utf8(data.to_vec()) {
+                Ok(s) => {
+                    let mut password = password_clone.lock().unwrap();
+                    *password = s;
+                }
+                Err(e) => log::warn!("Password write rejected: invalid UTF-8: {}", e),
             }
         });
 
@@ -182,9 +217,12 @@ impl WifiConfigService {
     }
 
     /// Clear pending configuration.
+    ///
+    /// Securely zeros the password before clearing to prevent memory leaks.
     pub fn clear_pending(&self) {
         let mut ssid = self.pending_ssid.lock().unwrap();
         let mut password = self.pending_password.lock().unwrap();
+        password.zeroize(); // Zero password memory before clearing
         ssid.clear();
         password.clear();
     }

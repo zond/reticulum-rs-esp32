@@ -15,7 +15,9 @@
 //! assert_eq!(cmd, ConfigCommand::Connect);
 //! ```
 
+use std::borrow::Cow;
 use std::fmt;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Maximum SSID length per IEEE 802.11 standard.
 pub const MAX_SSID_LEN: usize = 32;
@@ -30,7 +32,9 @@ pub const MIN_PASSWORD_LEN: usize = 8;
 pub const CONNECTION_TIMEOUT_SECS: u64 = 30;
 
 /// WiFi credentials for connecting to an access point.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The password is automatically zeroed from memory when this struct is dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct WifiConfig {
     /// Network SSID (1-32 bytes).
     pub ssid: String,
@@ -115,14 +119,33 @@ impl WifiConfig {
         }
 
         let ssid_len = bytes[0] as usize;
-        if bytes.len() < 1 + ssid_len + 1 {
-            return Err(ConfigError::InvalidFormat("truncated SSID".into()));
+
+        // Validate SSID length against max before allocation (prevents memory exhaustion)
+        if ssid_len > MAX_SSID_LEN {
+            return Err(ConfigError::SsidTooLong {
+                len: ssid_len,
+                max: MAX_SSID_LEN,
+            });
+        }
+
+        // Ensure we have enough bytes for SSID and password length byte
+        if bytes.len() < 2 + ssid_len {
+            return Err(ConfigError::InvalidFormat("truncated data".into()));
         }
 
         let ssid = String::from_utf8(bytes[1..1 + ssid_len].to_vec())
             .map_err(|_| ConfigError::InvalidFormat("invalid SSID UTF-8".into()))?;
 
         let password_len = bytes[1 + ssid_len] as usize;
+
+        // Validate password length against max before allocation
+        if password_len > MAX_PASSWORD_LEN {
+            return Err(ConfigError::PasswordTooLong {
+                len: password_len,
+                max: MAX_PASSWORD_LEN,
+            });
+        }
+
         let password_start = 2 + ssid_len;
         if bytes.len() < password_start + password_len {
             return Err(ConfigError::InvalidFormat("truncated password".into()));
@@ -151,12 +174,14 @@ pub enum WifiStatus {
 
 impl WifiStatus {
     /// Convert status to a string for BLE transmission.
-    pub fn to_ble_string(&self) -> String {
+    ///
+    /// Uses `Cow` to avoid allocations for static status values.
+    pub fn to_ble_string(&self) -> Cow<'static, str> {
         match self {
-            Self::Unconfigured => "unconfigured".to_string(),
-            Self::Connecting => "connecting".to_string(),
-            Self::Connected { ip } => format!("connected:{}", ip),
-            Self::Failed { reason } => format!("failed:{}", reason),
+            Self::Unconfigured => "unconfigured".into(),
+            Self::Connecting => "connecting".into(),
+            Self::Connected { ip } => format!("connected:{}", ip).into(),
+            Self::Failed { reason } => format!("failed:{}", reason).into(),
         }
     }
 
@@ -362,6 +387,41 @@ mod tests {
     fn test_deserialize_truncated() {
         let result = WifiConfig::from_bytes(&[5, b'h', b'e', b'l', b'l']); // Missing 'o' and password
         assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
+    }
+
+    #[test]
+    fn test_deserialize_ssid_too_long() {
+        // Craft malicious input: ssid_len = 255 (exceeds MAX_SSID_LEN of 32)
+        let mut bytes = vec![255u8]; // ssid_len = 255
+        bytes.extend_from_slice(&[b'x'; 255]); // fake ssid data
+        bytes.push(8); // password_len
+        bytes.extend_from_slice(b"password");
+
+        let result = WifiConfig::from_bytes(&bytes);
+        assert!(matches!(result, Err(ConfigError::SsidTooLong { .. })));
+    }
+
+    #[test]
+    fn test_deserialize_password_too_long() {
+        // Craft malicious input: password_len = 255 (exceeds MAX_PASSWORD_LEN of 64)
+        let mut bytes = vec![4u8]; // ssid_len = 4
+        bytes.extend_from_slice(b"test"); // ssid
+        bytes.push(255); // password_len = 255
+        bytes.extend_from_slice(&[b'x'; 255]); // fake password data
+
+        let result = WifiConfig::from_bytes(&bytes);
+        assert!(matches!(result, Err(ConfigError::PasswordTooLong { .. })));
+    }
+
+    #[test]
+    fn test_deserialize_exact_max_lengths() {
+        // SSID at exactly MAX_SSID_LEN (32) and password at MAX_PASSWORD_LEN (64)
+        let ssid = "a".repeat(MAX_SSID_LEN);
+        let password = "b".repeat(MAX_PASSWORD_LEN);
+        let config = WifiConfig::new(&ssid, &password).unwrap();
+        let bytes = config.to_bytes();
+        let restored = WifiConfig::from_bytes(&bytes).unwrap();
+        assert_eq!(config, restored);
     }
 
     // ==================== WifiStatus Tests ====================

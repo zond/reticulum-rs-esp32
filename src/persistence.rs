@@ -4,6 +4,17 @@
 //! so it persists across reboots. A stable identity is essential for Reticulum routing
 //! and destination addressing.
 //!
+//! # Security Considerations
+//!
+//! **Warning**: By default, private keys are stored as plaintext hex strings in NVS
+//! flash memory. Anyone with physical access to the device can extract the keys.
+//!
+//! For production deployments, you should enable ESP-IDF flash encryption:
+//! - [Flash Encryption Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html)
+//! - [NVS Encryption Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/storage/nvs_encryption.html)
+//!
+//! Compromised private keys allow impersonation of the node on the Reticulum network.
+//!
 //! # Usage
 //!
 //! ```ignore
@@ -49,6 +60,7 @@ pub fn save_identity(
 ) -> Result<(), EspError> {
     let hex_string = identity.to_hex_string();
     nvs.set_raw(IDENTITY_KEY, hex_string.as_bytes())?;
+    info!("Identity saved to NVS");
     Ok(())
 }
 
@@ -57,6 +69,7 @@ pub fn save_identity(
 /// After calling this, the next boot will generate a new identity.
 pub fn clear_identity(nvs: &mut EspNvs<NvsDefault>) -> Result<(), EspError> {
     nvs.remove(IDENTITY_KEY)?;
+    log::warn!("Identity cleared from NVS - new identity will be generated on next boot");
     Ok(())
 }
 

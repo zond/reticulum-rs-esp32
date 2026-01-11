@@ -1442,6 +1442,7 @@ dependencies = [
  "log",
  "rand_core",
  "reticulum",
+ "zeroize",
 ]
 
 [[package]]
