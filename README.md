@@ -12,6 +12,7 @@ Firmware for the LILYGO T3-S3 ESP32-S3 LoRa board that implements a Reticulum tr
 - Mesh with other LoRa devices using the Reticulum protocol
 - Mesh with BLE devices (custom implementation inspired by ble-reticulum)
 - Connect to the Reticulum internet testnet via WiFi
+- Provide a simple HTTP/JSON stats endpoint for monitoring
 
 ## Dependencies
 

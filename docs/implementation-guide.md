@@ -8,6 +8,8 @@ Detailed implementation plans for the ESP32 transport node.
 2. [BLE Interface](#2-ble-interface)
 3. [Identity Persistence](#3-identity-persistence)
 4. [Bandwidth/Airtime Limiting](#4-bandwidthairtime-limiting)
+5. [Host-Testable Components](#5-host-testable-components)
+6. [Stats HTTP Endpoint](#6-stats-http-endpoint)
 
 **Note**: Features like Channels, Resources, Ratcheting, and Group Destinations are **out of scope** - they're endpoint/application concerns handled by client devices (e.g., Android phone running Sideband), not transport nodes.
 
@@ -515,6 +517,202 @@ impl LoRaInterface {
 
 ---
 
+## 5. Host-Testable Components
+
+These components can be fully developed and tested on the host machine without ESP32 hardware, making them ideal for initial development.
+
+### Already Implemented
+
+| Component | Status | Lines | Tests |
+|-----------|--------|-------|-------|
+| Duty Cycle Limiter | ✅ Done | ~130 | 8 |
+| LoRa Airtime Calculator | ✅ Done | ~180 | 14 |
+| BLE Fragmentation | ✅ Done | ~500 | 26 |
+
+### Candidates for Host Development
+
+| Component | Testability | Priority | Estimate |
+|-----------|-------------|----------|----------|
+| **CSMA/CA Logic** | 90% - needs mock timer | Medium | ~100 lines, ~10 tests |
+| **Announce Cache** | 100% - pure data structure | Medium | ~150 lines, ~15 tests |
+| **Path Table** | 100% - pure data structure | Medium | ~200 lines, ~15 tests |
+| **Packet Validation** | 100% - pure logic | Low | ~100 lines, ~10 tests |
+
+### BLE Fragmentation (Implemented)
+
+See `src/ble/fragmentation.rs` - implements packet splitting and reassembly for BLE's small MTU.
+
+**Features:**
+- Simple header: `[seq:1][flags:1][data:N]`
+- Flags: `MORE_FRAGMENTS`, `FIRST_FRAGMENT`
+- Sequence numbers: 8-bit with rollover handling
+- Reassembly with timeout for incomplete packets
+- Memory bounds: max pending reassemblies, max fragments per packet
+- Fragment validation (rejects invalid flags)
+
+### CSMA/CA Logic
+
+Listen-before-talk for LoRa to avoid collisions on shared frequencies.
+
+**Design:**
+- Check RSSI before transmitting
+- Random backoff on channel busy
+- Configurable retry count and backoff parameters
+- Can be tested with mock channel state
+
+### Announce Cache
+
+LRU cache for recently seen announces to avoid rebroadcasting duplicates.
+
+**Design:**
+- Key: announce hash
+- Value: timestamp + hop count
+- Configurable size limit
+- TTL-based expiration
+
+### Path Table
+
+Routing table for discovered paths to destinations.
+
+**Design:**
+- Key: destination hash
+- Value: next hop interface + metrics
+- Path scoring based on hop count, RSSI, etc.
+- Expiration and refresh logic
+
+---
+
+## 6. Stats HTTP Endpoint
+
+**Scope**: This project only
+**Estimate**: ~150 lines
+**Priority**: Medium (valuable for monitoring/debugging)
+
+### Purpose
+
+A minimal HTTP server that exposes transport node statistics as JSON. Designed for:
+- Quick status checks via browser or curl
+- Machine consumption (monitoring scripts, dashboards)
+- Debugging during development
+
+### Recommended Crate
+
+```toml
+[dependencies]
+embedded-svc = "0.28"  # Already included with esp-idf-svc
+```
+
+ESP-IDF's built-in HTTP server via `esp_idf_svc::http::server` is lightweight and sufficient.
+
+### API Design
+
+Single endpoint returning JSON:
+
+```
+GET /stats HTTP/1.1
+```
+
+Response:
+```json
+{
+  "uptime_secs": 3600,
+  "identity_hash": "a1b2c3d4...",
+  "interfaces": {
+    "lora": {
+      "tx_packets": 150,
+      "rx_packets": 230,
+      "tx_bytes": 45000,
+      "rx_bytes": 69000,
+      "duty_cycle_remaining_pct": 87.5,
+      "heard_stations_1h": 5
+    },
+    "ble": {
+      "heard_stations_1h": 3,
+      "tx_packets": 50,
+      "rx_packets": 45,
+      "tx_bytes": 15000,
+      "rx_bytes": 13500
+    },
+    "wifi": {
+      "connected": true,
+      "tx_packets": 500,
+      "rx_packets": 480,
+      "tx_bytes": 150000,
+      "rx_bytes": 144000
+    }
+  },
+  "routing": {
+    "known_destinations": 12,
+    "path_table_size": 8,
+    "announce_cache_size": 25
+  }
+}
+```
+
+**Notes on peer tracking:**
+- **LoRa/BLE**: "Heard stations" - count of unique source hashes seen in the last hour
+- BLE connections are transient (connect, send, disconnect), so tracking "heard" is more meaningful than connection count
+- This gives a consistent view of mesh reachability across both radio interfaces
+
+### Implementation Plan
+
+```rust
+// src/stats.rs
+use esp_idf_svc::http::server::{EspHttpServer, Configuration};
+use std::sync::Arc;
+
+pub struct NodeStats {
+    pub uptime_start: Instant,
+    pub identity_hash: String,
+    pub lora: InterfaceStats,
+    pub ble: InterfaceStats,
+    pub wifi: InterfaceStats,
+    pub routing: RoutingStats,
+}
+
+pub struct InterfaceStats {
+    pub tx_packets: AtomicU64,
+    pub rx_packets: AtomicU64,
+    pub tx_bytes: AtomicU64,
+    pub rx_bytes: AtomicU64,
+}
+
+pub fn start_stats_server(
+    stats: Arc<NodeStats>,
+    port: u16,
+) -> Result<EspHttpServer, EspError> {
+    let mut server = EspHttpServer::new(&Configuration {
+        http_port: port,
+        ..Default::default()
+    })?;
+
+    server.fn_handler("/stats", Method::Get, move |req| {
+        let json = stats.to_json();
+        req.into_ok_response()?
+            .write_all(json.as_bytes())
+    })?;
+
+    Ok(server)
+}
+```
+
+### Key Implementation Tasks
+
+1. **Define stats structs** with atomic counters
+2. **Instrument interfaces** to update counters on TX/RX
+3. **Add JSON serialization** (manual or serde_json if size permits)
+4. **Start HTTP server** on WiFi connection
+5. **Expose on port 80** (or configurable)
+
+### Memory Considerations
+
+- HTTP server: ~10-15 KB RAM
+- Stats struct: ~200 bytes
+- JSON buffer: ~1 KB (stack allocated per request)
+- Total: ~15 KB additional RAM (acceptable)
+
+---
+
 ## Summary: Implementation Order
 
 ### Phase 1: Get Device Working (Blockers)
@@ -527,6 +725,7 @@ impl LoRaInterface {
 
 4. **BLE Interface** - Mesh with BLE devices
 5. **Airtime Limiting** - Legal compliance for LoRa
+6. **Stats HTTP Endpoint** - Monitoring and debugging
 
 ### Dependencies
 
@@ -546,6 +745,5 @@ BLE Interface (independent)
 | BLE Interface | ~1200 |
 | Identity Persistence | ~50 |
 | Airtime Limiting | ~100 |
-| **Total** | **~2150** |
-
-Reduced from original ~2400 estimate after simplifying persistence and rate limiting based on agent review.
+| Stats HTTP Endpoint | ~150 |
+| **Total** | **~2300** |
