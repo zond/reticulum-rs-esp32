@@ -8,8 +8,8 @@ Analysis of reticulum-rs-esp32 firmware fit on ESP32-S3 (LILYGO T3-S3).
 
 | Resource | Current | Projected Full | Available | Margin |
 |----------|---------|----------------|-----------|--------|
-| Flash | 928 KB | ~1.5 MB | 3.3 MB | 54% free |
-| SRAM | ~170 KB | ~450 KB | 512 KB | 13% free |
+| Flash | 928 KB | ~1.6 MB | 3.3 MB | 52% free |
+| SRAM | ~170 KB | ~452 KB | 512 KB | 12% free |
 | PSRAM | 0 KB | ~256 KB | 2 MB | 87% free |
 
 ## Hardware Specifications (LILYGO T3-S3)
@@ -50,8 +50,16 @@ The minimal firmware (928 KB) contains:
 | Component | Flash | RAM |
 |-----------|-------|-----|
 | esp32-nimble | 60-80 KB | 15-20 KB |
-| GATT service | 25-35 KB | 2 KB |
+| GATT services (mesh + WiFi config) | 25-35 KB | 2-3 KB |
 | Fragmentation layer | 5-10 KB | 1 KB |
+
+### WiFi + HTTP Stats (~30 KB flash, ~8 KB RAM)
+
+| Component | Flash | RAM |
+|-----------|-------|-----|
+| WiFi connection manager | 10-15 KB | 2 KB |
+| HTTP server (esp-idf-svc) | 15-20 KB | 4-6 KB |
+| JSON stats serialization | 5 KB | 1 KB |
 
 ## Runtime Memory (SRAM)
 
@@ -63,12 +71,13 @@ Worst-case peak usage with all features active:
 | Reticulum-rs (active) | ~160 KB |
 | Tokio Runtime + Tasks | ~35 KB |
 | LoRa Interface | ~12 KB |
-| BLE Interface | ~27 KB |
+| BLE Interface (mesh + WiFi config) | ~27 KB |
+| HTTP Stats Server | ~6 KB |
 | Crypto Operations | ~4 KB |
 | Packet buffers | ~8 KB |
-| **Total Peak** | **~446 KB** |
+| **Total Peak** | **~452 KB** |
 
-**Remaining:** ~66 KB (13% margin)
+**Remaining:** ~60 KB (12% margin)
 
 ## PSRAM Strategy
 

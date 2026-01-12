@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+[workspace]
+members = ["macros"]
+
 [lib]
 name = "reticulum_rs_esp32"
 path = "src/lib.rs"
@@ -11,6 +14,11 @@ path = "src/lib.rs"
 [[bin]]
 name = "reticulum-rs-esp32"
 path = "src/main.rs"
+
+[[bin]]
+name = "device-tests"
+path = "src/bin/device-tests.rs"
+required-features = ["tap-tests"]
 
 [features]
 default = ["esp32"]
@@ -21,6 +29,11 @@ esp32 = [
     "dep:esp32-nimble",
     "dep:reticulum",
     "dep:rand_core",
+]
+# Enable TAP test code for device testing (host, QEMU, or hardware)
+tap-tests = [
+    "dep:reticulum-rs-esp32-macros",
+    "dep:inventory",
 ]
 
 [dependencies]
@@ -43,6 +56,10 @@ log = "0.4"
 
 # Security: zero sensitive data on drop
 zeroize = { version = "1.7", features = ["derive"] }
+
+# TAP testing support (only for tap-tests feature)
+reticulum-rs-esp32-macros = { path = "macros", optional = true }
+inventory = { version = "0.3", optional = true }
 
 [build-dependencies]
 embuild = { version = "0.33", features = ["espidf"] }

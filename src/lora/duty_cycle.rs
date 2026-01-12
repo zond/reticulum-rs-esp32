@@ -131,18 +131,19 @@ impl DutyCycleLimiter {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(feature = "tap-tests")]
+mod tap_tests {
     use super::*;
+    use reticulum_rs_esp32_macros::tap_test;
 
-    #[test]
+    #[tap_test]
     fn test_new_limiter_has_full_budget() {
         let limiter = DutyCycleLimiter::new(1.0, Duration::from_secs(3600));
         // 1% of 1 hour = 36 seconds = 36_000_000 microseconds
         assert_eq!(limiter.budget(), 36_000_000);
     }
 
-    #[test]
+    #[tap_test]
     fn test_consume_reduces_budget() {
         let mut limiter = DutyCycleLimiter::new(1.0, Duration::from_secs(3600));
         let initial = limiter.remaining();
@@ -151,7 +152,7 @@ mod tests {
         assert_eq!(limiter.remaining(), initial - 1_000_000);
     }
 
-    #[test]
+    #[tap_test]
     fn test_consume_fails_when_exceeded() {
         let mut limiter = DutyCycleLimiter::new(1.0, Duration::from_secs(3600));
         let budget = limiter.budget();
@@ -166,7 +167,7 @@ mod tests {
         assert_eq!(limiter.remaining(), 0);
     }
 
-    #[test]
+    #[tap_test]
     fn test_partial_consume_when_not_enough() {
         let mut limiter = DutyCycleLimiter::new(1.0, Duration::from_secs(3600));
 
@@ -181,7 +182,7 @@ mod tests {
         assert_eq!(limiter.remaining(), 100);
     }
 
-    #[test]
+    #[tap_test]
     fn test_remaining_percent() {
         let mut limiter = DutyCycleLimiter::new(1.0, Duration::from_secs(3600));
 
@@ -193,7 +194,7 @@ mod tests {
         assert!((limiter.remaining_percent() - 50.0).abs() < 0.01);
     }
 
-    #[test]
+    #[tap_test]
     fn test_different_duty_cycles() {
         // 10% duty cycle (US regulations)
         let limiter = DutyCycleLimiter::new(10.0, Duration::from_secs(3600));
@@ -204,7 +205,7 @@ mod tests {
         assert_eq!(limiter.budget(), 3_600_000); // 3.6 seconds
     }
 
-    #[test]
+    #[tap_test]
     fn test_zero_budget_is_safe() {
         let mut limiter = DutyCycleLimiter::new(0.0, Duration::from_secs(3600));
         assert_eq!(limiter.budget(), 0);
@@ -212,7 +213,7 @@ mod tests {
         assert_eq!(limiter.remaining_percent(), 0.0);
     }
 
-    #[test]
+    #[tap_test]
     fn test_multiple_small_consumptions() {
         let mut limiter = DutyCycleLimiter::new(1.0, Duration::from_secs(3600));
         let budget = limiter.budget();

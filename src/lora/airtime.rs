@@ -130,11 +130,12 @@ pub fn calculate_airtime_ms(payload_bytes: usize, params: &LoRaParams) -> f64 {
     calculate_airtime_us(payload_bytes, params) as f64 / 1000.0
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(feature = "tap-tests")]
+mod tap_tests {
     use super::*;
+    use reticulum_rs_esp32_macros::tap_test;
 
-    #[test]
+    #[tap_test]
     fn test_default_params() {
         let params = LoRaParams::default();
         assert_eq!(params.spreading_factor, 7);
@@ -145,7 +146,7 @@ mod tests {
         assert!(params.crc_enabled);
     }
 
-    #[test]
+    #[tap_test]
     fn test_symbol_duration_sf7_125khz() {
         let params = LoRaParams {
             spreading_factor: 7,
@@ -156,7 +157,7 @@ mod tests {
         assert_eq!(params.symbol_duration_us(), 1024);
     }
 
-    #[test]
+    #[tap_test]
     fn test_symbol_duration_sf12_125khz() {
         let params = LoRaParams {
             spreading_factor: 12,
@@ -167,7 +168,7 @@ mod tests {
         assert_eq!(params.symbol_duration_us(), 32768);
     }
 
-    #[test]
+    #[tap_test]
     fn test_symbol_duration_sf7_500khz() {
         let params = LoRaParams {
             spreading_factor: 7,
@@ -178,7 +179,7 @@ mod tests {
         assert_eq!(params.symbol_duration_us(), 256);
     }
 
-    #[test]
+    #[tap_test]
     fn test_low_data_rate_optimize() {
         // SF7 at 125kHz: symbol time = 1.024ms, no LDRO needed
         let params = LoRaParams {
@@ -213,7 +214,7 @@ mod tests {
         assert!(!params.low_data_rate_optimize());
     }
 
-    #[test]
+    #[tap_test]
     fn test_airtime_increases_with_payload() {
         let params = LoRaParams::default();
 
@@ -235,20 +236,27 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tap_test]
     fn test_airtime_increases_with_sf() {
         let payload = 50;
 
-        let mut params = LoRaParams::default();
+        let params_sf7 = LoRaParams {
+            spreading_factor: 7,
+            ..Default::default()
+        };
+        let airtime_sf7 = calculate_airtime_us(payload, &params_sf7);
 
-        params.spreading_factor = 7;
-        let airtime_sf7 = calculate_airtime_us(payload, &params);
+        let params_sf10 = LoRaParams {
+            spreading_factor: 10,
+            ..Default::default()
+        };
+        let airtime_sf10 = calculate_airtime_us(payload, &params_sf10);
 
-        params.spreading_factor = 10;
-        let airtime_sf10 = calculate_airtime_us(payload, &params);
-
-        params.spreading_factor = 12;
-        let airtime_sf12 = calculate_airtime_us(payload, &params);
+        let params_sf12 = LoRaParams {
+            spreading_factor: 12,
+            ..Default::default()
+        };
+        let airtime_sf12 = calculate_airtime_us(payload, &params_sf12);
 
         assert!(
             airtime_sf10 > airtime_sf7,
@@ -264,7 +272,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tap_test]
     fn test_airtime_decreases_with_bandwidth() {
         let payload = 50;
 
@@ -295,7 +303,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tap_test]
     fn test_airtime_reasonable_range_sf7() {
         // At SF7/125kHz, a 100-byte packet should be in the 100-200ms range
         let params = LoRaParams::default();
@@ -308,7 +316,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tap_test]
     fn test_airtime_empty_packet() {
         let params = LoRaParams::default();
         let airtime_us = calculate_airtime_us(0, &params);
@@ -325,7 +333,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tap_test]
     fn test_airtime_max_reticulum_mdu() {
         // Maximum Reticulum MDU: 500 bytes
         let params = LoRaParams::default();
@@ -339,7 +347,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tap_test]
     fn test_airtime_sf12_long_range() {
         // At SF12/125kHz, even small packets take a long time
         let params = LoRaParams {
@@ -359,7 +367,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[tap_test]
     fn test_zero_bandwidth_is_safe() {
         let params = LoRaParams {
             bandwidth_hz: 0,
@@ -369,7 +377,7 @@ mod tests {
         assert_eq!(calculate_airtime_us(50, &params), 0);
     }
 
-    #[test]
+    #[tap_test]
     fn test_ms_conversion() {
         let params = LoRaParams::default();
         let airtime_us = calculate_airtime_us(50, &params);

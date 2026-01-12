@@ -11,9 +11,12 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 | Feature | Status | Impact | Scope |
 |---------|--------|--------|-------|
 | LoRa Interface (SX1262) | Missing | **BLOCKER** | This project |
-| BLE Interface | Missing | **BLOCKER** | This project |
-| Identity Persistence | Missing | **HIGH** | This project |
-| Bandwidth/Airtime Limiting | Missing | **HIGH** (for LoRa) | This project |
+| BLE Mesh Interface | Missing | **BLOCKER** | This project |
+| Identity Persistence | **COMPLETE** | ~~HIGH~~ | This project |
+| Bandwidth/Airtime Limiting | **COMPLETE** | ~~HIGH~~ | This project |
+| BLE Fragmentation Layer | **COMPLETE** | - | This project |
+| WiFi Config (BLE GATT) | **COMPLETE** | - | This project |
+| HTTP Stats Endpoint | Missing | MEDIUM | This project |
 
 ### Out of Scope (Endpoint Features)
 
@@ -89,11 +92,11 @@ These features are end-to-end between endpoints, not needed for transport nodes:
 | Public Identity | Complete | **Complete** | X25519 + Ed25519 keys |
 | Private Identity | Complete | **Complete** | Full keypair |
 | Identity hashing | Complete | **Complete** | Truncated SHA-256 |
-| Identity persistence | Complete | **Missing** | No file storage |
+| Identity persistence | Complete | **Complete** | ESP32 NVS storage (this project) |
 | Identity recall/remember | Complete | **Missing** | No caching system |
 | Identity blacklist | Complete | **Missing** | |
 
-**Assessment**: Core identity works. For a transport node, we only need our OWN stable identity (for node addressing). Tracking other identities (recall/remember/blacklist) is an endpoint concern.
+**Assessment**: Core identity works. Identity persistence is implemented in `src/persistence.rs` using ESP32 NVS. For a transport node, we only need our OWN stable identity (for node addressing). Tracking other identities (recall/remember/blacklist) is an endpoint concern.
 
 ---
 
@@ -225,10 +228,11 @@ These features are end-to-end between endpoints, not needed for transport nodes:
 | Transport headers | Complete | **Complete** | Type2 for routing |
 | Interface manager | Complete | **Complete** | |
 | Packet cache | Complete | **Complete** | Duplicate prevention |
-| Bandwidth limiting | Complete | **Missing** | 2% per interface |
+| Bandwidth limiting | Complete | **Complete** | Token bucket in `src/lora/duty_cycle.rs` |
+| Airtime calculation | Complete | **Complete** | LoRa formulas in `src/lora/airtime.rs` |
 | Interface modes | Complete | **Missing** | Full, P2P, AP, etc. |
 
-**Assessment**: Core routing works. Advanced features like bandwidth limiting missing.
+**Assessment**: Core routing works. Airtime/duty cycle limiting implemented for LoRa regulatory compliance.
 
 ---
 
@@ -299,17 +303,35 @@ Reticulum-rs provides a solid foundation for a transport node:
 - Functional link establishment
 - TCP/UDP interfaces (ready for testnet)
 
-Key work needed for our ESP32 transport node:
+### Completed in This Project
+
+| Component | Lines | Status |
+|-----------|-------|--------|
+| Identity persistence (`src/persistence.rs`) | ~100 | **DONE** |
+| Airtime calculation (`src/lora/airtime.rs`) | ~385 | **DONE** |
+| Duty cycle limiter (`src/lora/duty_cycle.rs`) | ~230 | **DONE** |
+| BLE fragmentation (`src/ble/fragmentation.rs`) | ~500 | **DONE** |
+| WiFi config validation (`src/wifi/config.rs`) | ~320 | **DONE** |
+| WiFi BLE service (`src/wifi/ble_service.rs`) | ~80 | **DONE** |
+| WiFi connection (`src/wifi/connection.rs`) | ~70 | **DONE** |
+| WiFi NVS storage (`src/wifi/storage.rs`) | ~50 | **DONE** |
+| TAP testing framework (`src/testing.rs`, `macros/`) | ~450 | **DONE** |
+
+### Remaining Work
 
 | Task | Estimate |
 |------|----------|
-| **LoRa interface (SX1262)** | ~800 lines |
-| **BLE interface** | ~1200 lines |
-| **Identity persistence** | ~50 lines |
-| **Airtime limiting** | ~100 lines |
+| **LoRa interface (SX1262 driver)** | ~600 lines |
+| **BLE mesh protocol** | ~800 lines |
+| **HTTP stats endpoint** | ~150 lines |
+| **Integration/main.rs wiring** | ~200 lines |
 
-**Total: ~2150 lines of code**
+**Remaining: ~1750 lines of code**
 
 Many features (Channels, Resources, Ratcheting, Group Destinations) are **not needed** for a transport node - they're handled by endpoints. This significantly reduces our scope.
 
-The existing reticulum-rs code quality is good, with clear architecture and proper async patterns. Our work is focused on hardware interfaces (LoRa, BLE) and transport node essentials.
+The existing reticulum-rs code quality is good, with clear architecture and proper async patterns. Our work is focused on hardware interfaces (LoRa, BLE mesh) and transport node essentials.
+
+---
+
+*Updated 2026-01-12 with implementation progress*

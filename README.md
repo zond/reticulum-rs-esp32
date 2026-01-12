@@ -80,9 +80,10 @@ cargo build --release
 # Flash to device
 cargo espflash flash --release --monitor
 
-# Run tests on host (requires explicit target to override ESP32 default)
+# Run tests on host (TAP format output)
 # Use your host triple: x86_64-apple-darwin (macOS), x86_64-unknown-linux-gnu (Linux)
-cargo test --no-default-features --target x86_64-apple-darwin
+cargo run --bin device-tests --no-default-features --features tap-tests \
+    --target x86_64-apple-darwin
 
 # Lint and format
 cargo clippy --no-default-features --target x86_64-apple-darwin -- -D warnings
