@@ -31,3 +31,24 @@ pub fn ensure_esp_initialized() {
 pub fn ensure_esp_initialized() {
     // No-op on host
 }
+
+/// Get the default NVS partition, taking it only once.
+///
+/// This function ensures `EspNvsPartition::take()` is called at most once
+/// across the entire application. Multiple modules can safely call this
+/// to get a clone of the partition handle.
+#[cfg(feature = "esp32")]
+pub fn get_nvs_default_partition(
+) -> Result<esp_idf_svc::nvs::EspNvsPartition<esp_idf_svc::nvs::NvsDefault>, esp_idf_sys::EspError>
+{
+    use esp_idf_svc::nvs::{EspNvsPartition, NvsDefault};
+    use std::sync::OnceLock;
+
+    // Store Result to handle fallible initialization with stable OnceLock
+    static NVS_PARTITION: OnceLock<Result<EspNvsPartition<NvsDefault>, esp_idf_sys::EspError>> =
+        OnceLock::new();
+
+    NVS_PARTITION
+        .get_or_init(|| EspNvsPartition::<NvsDefault>::take())
+        .clone()
+}

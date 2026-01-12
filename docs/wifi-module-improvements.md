@@ -11,20 +11,24 @@ The `CONNECTION_TIMEOUT_SECS` constant (30s) is defined in config.rs but never u
 
 ## Performance
 
-### NVS Buffer Size (Priority: Low)
-**Location:** `src/wifi/storage.rs:22`
+### ~~NVS Buffer Size~~ ✓ RESOLVED
+**Location:** `src/wifi/storage.rs:20`
 
-Replace magic number with named constant:
+~~Replace magic number with named constant.~~
+
+**Resolution:** Updated to use named constants:
 ```rust
-const MAX_CONFIG_BUFFER_SIZE: usize = 1 + MAX_SSID_LEN + 1 + MAX_PASSWORD_LEN;  // 98 bytes
+const MAX_CONFIG_BUFFER_SIZE: usize = 1 + MAX_SSID_LEN + 1 + MAX_PASSWORD_LEN;
 ```
 
 ## Architecture
 
-### NVS Re-initialization Guard (Priority: Medium)
-**Location:** `src/wifi/storage.rs:39-45`
+### ~~NVS Re-initialization Guard~~ ✓ RESOLVED
+**Location:** `src/wifi/storage.rs` / `src/lib.rs`
 
-`EspNvsPartition::take()` can only succeed once. Add guard against multiple initialization calls using `OnceLock` or similar.
+~~`EspNvsPartition::take()` can only succeed once. Add guard against multiple initialization calls using `OnceLock` or similar.~~
+
+**Resolution:** Added shared `get_nvs_default_partition()` function in `lib.rs` using `OnceLock` to ensure `EspNvsPartition::take()` is called at most once. Both `persistence.rs` and `wifi/storage.rs` now use this shared partition accessor.
 
 ### Error Information Preservation (Priority: Low)
 **Location:** `src/wifi/connection.rs:65, 70`
@@ -44,4 +48,4 @@ Add version byte to `to_bytes()`/`from_bytes()` for forward compatibility if for
 
 ---
 
-*Updated 2026-01-11*
+*Updated 2026-01-12*

@@ -25,7 +25,7 @@
 //! log::info!("Node identity: {}", identity.address_hash());
 //! ```
 
-use esp_idf_svc::nvs::{EspNvs, EspNvsPartition, NvsDefault};
+use esp_idf_svc::nvs::{EspNvs, NvsDefault};
 use esp_idf_sys::EspError;
 use log::info;
 use rand_core::OsRng;
@@ -90,10 +90,13 @@ pub fn load_or_create_identity(nvs: &mut EspNvs<NvsDefault>) -> Result<PrivateId
     Ok(identity)
 }
 
-/// Initialize NVS partition for Reticulum identity storage.
+/// Initialize NVS for Reticulum identity storage.
+///
+/// Uses a shared partition handle to ensure `EspNvsPartition::take()` is only
+/// called once across the entire application. Safe to call multiple times.
 ///
 /// Must be called before any other persistence functions.
 pub fn init_nvs() -> Result<EspNvs<NvsDefault>, EspError> {
-    let partition = EspNvsPartition::<NvsDefault>::take()?;
+    let partition = crate::get_nvs_default_partition()?;
     EspNvs::new(partition, NVS_NAMESPACE, true)
 }

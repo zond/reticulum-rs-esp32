@@ -17,8 +17,7 @@ const NVS_KEY: &str = "credentials";
 
 /// Maximum buffer size for WiFi config serialization.
 /// Format: [ssid_len:1][ssid:32][password_len:1][password:64] = 98 bytes.
-/// Adding small margin for safety.
-const MAX_CONFIG_BUFFER_SIZE: usize = 1 + MAX_SSID_LEN + 1 + MAX_PASSWORD_LEN + 4;
+const MAX_CONFIG_BUFFER_SIZE: usize = 1 + MAX_SSID_LEN + 1 + MAX_PASSWORD_LEN;
 
 /// Load WiFi configuration from NVS.
 ///
@@ -42,9 +41,11 @@ pub fn clear_wifi_config(nvs: &mut EspNvs<NvsDefault>) -> Result<(), EspError> {
     Ok(())
 }
 
-/// Initialize NVS partition for WiFi configuration.
+/// Initialize NVS for WiFi configuration.
+///
+/// Uses a shared partition handle to ensure `EspNvsPartition::take()` is only
+/// called once across the entire application. Safe to call multiple times.
 pub fn init_nvs() -> Result<EspNvs<NvsDefault>, EspError> {
-    use esp_idf_svc::nvs::EspNvsPartition;
-    let partition = EspNvsPartition::<NvsDefault>::take()?;
+    let partition = crate::get_nvs_default_partition()?;
     EspNvs::new(partition, NVS_NAMESPACE, true)
 }
