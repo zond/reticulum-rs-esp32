@@ -209,6 +209,7 @@ impl std::fmt::Display for FragmentError {
 impl std::error::Error for FragmentError {}
 
 /// Splits large packets into BLE-sized fragments.
+#[derive(Debug)]
 pub struct Fragmenter {
     /// Maximum fragment size (including header).
     mtu: usize,
@@ -226,15 +227,21 @@ impl Fragmenter {
     ///
     /// Panics if MTU is less than HEADER_SIZE + 1 (minimum 3 bytes).
     pub fn new(mtu: usize) -> Self {
-        assert!(
-            mtu > HEADER_SIZE,
-            "MTU must be greater than header size ({})",
-            HEADER_SIZE
-        );
-        Self {
+        Self::try_new(mtu).expect("MTU must be greater than header size")
+    }
+
+    /// Try to create a new fragmenter with the given MTU.
+    ///
+    /// Returns `Err(FragmentError::MtuTooSmall)` if MTU is less than
+    /// HEADER_SIZE + 1 (minimum 3 bytes).
+    pub fn try_new(mtu: usize) -> Result<Self, FragmentError> {
+        if mtu <= HEADER_SIZE {
+            return Err(FragmentError::MtuTooSmall);
+        }
+        Ok(Self {
             mtu,
             next_sequence: 0,
-        }
+        })
     }
 
     /// Get the maximum payload size per fragment.
@@ -537,7 +544,8 @@ impl Reassembler {
     fn cleanup_expired(&mut self) {
         let now = Instant::now();
         self.pending
-            .retain(|_, pending| now.duration_since(pending.started) < self.timeout);
+            // Use saturating_duration_since to handle clock jitter in emulation
+            .retain(|_, pending| now.saturating_duration_since(pending.started) < self.timeout);
     }
 
     /// Get the number of pending reassemblies.
@@ -551,10 +559,10 @@ impl Reassembler {
     }
 }
 
-#[cfg(feature = "tap-tests")]
-mod tap_tests {
+#[cfg(test)]
+mod tests {
     use super::*;
-    use reticulum_rs_esp32_macros::tap_test;
+    use reticulum_rs_esp32_macros::esp32_test;
 
     /// Default source address for tests (simulates a single BLE peer).
     const TEST_SOURCE: BleAddress = BleAddress::new([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
@@ -564,7 +572,7 @@ mod tap_tests {
 
     // ==================== Fragment Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragment_serialize_deserialize() {
         let fragment = Fragment::new(42, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![1, 2, 3]);
         let bytes = fragment.to_bytes();
@@ -575,7 +583,7 @@ mod tap_tests {
         assert_eq!(decoded, fragment);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragment_write_to_buffer() {
         let fragment = Fragment::new(1, FLAG_FIRST_FRAGMENT, vec![10, 20, 30]);
         let mut buf = [0u8; 10];
@@ -592,7 +600,7 @@ mod tap_tests {
         );
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragment_flags() {
         let first = Fragment::new(0, FLAG_FIRST_FRAGMENT, vec![]);
         assert!(first.is_first());
@@ -622,7 +630,7 @@ mod tap_tests {
         assert!(!invalid2.has_valid_flags());
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragment_from_bytes_too_short() {
         assert_eq!(Fragment::from_bytes(&[]), Err(FragmentError::TooShort));
         assert_eq!(Fragment::from_bytes(&[0]), Err(FragmentError::TooShort));
@@ -632,7 +640,7 @@ mod tap_tests {
 
     // ==================== Fragmenter Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_single_fragment() {
         let mut fragmenter = Fragmenter::new(20);
         let packet = vec![1, 2, 3, 4, 5]; // 5 bytes, fits in one fragment
@@ -644,7 +652,7 @@ mod tap_tests {
         assert_eq!(fragments[0].payload, packet);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_multiple_fragments() {
         let mut fragmenter = Fragmenter::new(5); // 5 byte MTU = 3 byte payload
         let packet = vec![1, 2, 3, 4, 5, 6, 7, 8]; // 8 bytes = 3 fragments
@@ -668,7 +676,7 @@ mod tap_tests {
         assert_eq!(fragments[2].payload, vec![7, 8]);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_exact_fit() {
         let mut fragmenter = Fragmenter::new(5); // 3 byte payload
         let packet = vec![1, 2, 3, 4, 5, 6]; // Exactly 2 fragments
@@ -679,13 +687,13 @@ mod tap_tests {
         assert_eq!(fragments[1].payload, vec![4, 5, 6]);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_empty_packet() {
         let mut fragmenter = Fragmenter::new(20);
         assert_eq!(fragmenter.fragment(&[]), Err(FragmentError::EmptyPacket));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_sequence_increment() {
         let mut fragmenter = Fragmenter::new(5);
 
@@ -696,7 +704,7 @@ mod tap_tests {
         assert_eq!(frags1[0].sequence + 1, frags2[0].sequence);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_sequence_wraparound() {
         let mut fragmenter = Fragmenter::new(5);
         fragmenter.next_sequence = 254;
@@ -707,7 +715,7 @@ mod tap_tests {
         assert_eq!(fragments[2].sequence, 0); // Wrapped
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_max_payload() {
         let fragmenter = Fragmenter::new(20);
         assert_eq!(fragmenter.max_payload(), 18);
@@ -716,7 +724,7 @@ mod tap_tests {
         assert_eq!(fragmenter.max_payload(), 510);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragmenter_needs_fragmentation() {
         let fragmenter = Fragmenter::new(20); // 18 byte payload
 
@@ -726,14 +734,27 @@ mod tap_tests {
         assert!(fragmenter.needs_fragmentation(100));
     }
 
-    #[tap_test(should_panic = "MTU must be greater than header size")]
+    #[esp32_test]
     fn test_fragmenter_mtu_too_small() {
-        Fragmenter::new(2); // Header is 2 bytes, need at least 3
+        // Header is 2 bytes, need at least 3 for MTU
+        assert!(matches!(
+            Fragmenter::try_new(0),
+            Err(FragmentError::MtuTooSmall)
+        ));
+        assert!(matches!(
+            Fragmenter::try_new(1),
+            Err(FragmentError::MtuTooSmall)
+        ));
+        assert!(matches!(
+            Fragmenter::try_new(2),
+            Err(FragmentError::MtuTooSmall)
+        ));
+        assert!(Fragmenter::try_new(3).is_ok()); // Minimum valid MTU
     }
 
     // ==================== Reassembler Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_single_fragment() {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
         let fragment = Fragment::new(0, FLAG_FIRST_FRAGMENT, vec![1, 2, 3]);
@@ -743,7 +764,7 @@ mod tap_tests {
         assert_eq!(reassembler.pending_count(), 0);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_multiple_fragments() {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
 
@@ -762,7 +783,7 @@ mod tap_tests {
         assert_eq!(reassembler.pending_count(), 0);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_out_of_order() {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
 
@@ -777,7 +798,7 @@ mod tap_tests {
         assert_eq!(result, Some(vec![1, 2, 3, 4, 5, 6]));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_duplicate_fragment() {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
 
@@ -791,7 +812,7 @@ mod tap_tests {
         assert_eq!(result, Some(vec![1, 2, 3, 4]));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_orphan_fragment() {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
 
@@ -801,7 +822,7 @@ mod tap_tests {
         assert_eq!(reassembler.pending_count(), 0);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_invalid_flags() {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
 
@@ -811,7 +832,7 @@ mod tap_tests {
         assert_eq!(reassembler.pending_count(), 0);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_max_pending_limit() {
         let mut reassembler = Reassembler::with_limits(Duration::from_secs(5), 2, 32);
         // Use different source addresses to test limit across sources
@@ -837,7 +858,7 @@ mod tap_tests {
         assert_eq!(reassembler.pending_count(), 2);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_max_fragments_limit() {
         let mut reassembler = Reassembler::with_limits(Duration::from_secs(5), 8, 2);
 
@@ -854,7 +875,7 @@ mod tap_tests {
         assert_eq!(reassembler.pending_count(), 0);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_reassembler_clear() {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
 
@@ -868,7 +889,7 @@ mod tap_tests {
 
     // ==================== Integration Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_fragment_and_reassemble_roundtrip() {
         let mut fragmenter = Fragmenter::new(10); // 8 byte payload
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
@@ -886,7 +907,7 @@ mod tap_tests {
         assert_eq!(result, Some(original));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_multiple_concurrent_reassemblies() {
         let mut fragmenter = Fragmenter::new(5);
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
@@ -913,7 +934,7 @@ mod tap_tests {
         assert_eq!(reassembler.pending_count(), 0);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_large_packet_fragmentation() {
         let mut fragmenter = Fragmenter::new(20); // Typical BLE default MTU
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
@@ -935,7 +956,7 @@ mod tap_tests {
         assert_eq!(result, Some(original));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_sequence_wraparound_in_reassembly() {
         let mut fragmenter = Fragmenter::new(5);
         fragmenter.next_sequence = 254;
@@ -955,5 +976,34 @@ mod tap_tests {
         }
 
         assert_eq!(result, Some(packet));
+    }
+
+    #[esp32_test]
+    fn test_concurrent_reassemblies_same_sequence_different_sources() {
+        // Test that two sources can have concurrent reassemblies starting at
+        // the same sequence number without interference
+        let mut reassembler = Reassembler::new(Duration::from_secs(5));
+
+        // Both sources start at sequence 0
+        let frag1_src1 = Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![1, 2]);
+        let frag2_src1 = Fragment::new(1, 0, vec![3, 4]);
+
+        let frag1_src2 = Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![10, 20]);
+        let frag2_src2 = Fragment::new(1, 0, vec![30, 40]);
+
+        // Start both reassemblies
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, frag1_src1), None);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE_2, frag1_src2), None);
+        assert_eq!(reassembler.pending_count(), 2);
+
+        // Complete source 2's packet first
+        let result2 = reassembler.add_fragment(TEST_SOURCE_2, frag2_src2);
+        assert_eq!(result2, Some(vec![10, 20, 30, 40]));
+
+        // Complete source 1's packet
+        let result1 = reassembler.add_fragment(TEST_SOURCE, frag2_src1);
+        assert_eq!(result1, Some(vec![1, 2, 3, 4]));
+
+        assert_eq!(reassembler.pending_count(), 0);
     }
 }

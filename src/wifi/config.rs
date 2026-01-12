@@ -290,15 +290,15 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-#[cfg(feature = "tap-tests")]
-mod tap_tests {
+#[cfg(test)]
+mod tests {
     use super::*;
-    use reticulum_rs_esp32_macros::tap_test;
+    use reticulum_rs_esp32_macros::esp32_test;
     use std::str::FromStr;
 
     // ==================== WifiConfig Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_valid_config() {
         let config = WifiConfig::new("TestNetwork", "password123").unwrap();
         assert_eq!(config.ssid, "TestNetwork");
@@ -306,53 +306,53 @@ mod tap_tests {
         assert!(config.validate().is_ok());
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_open_network() {
         let config = WifiConfig::open("OpenNetwork").unwrap();
         assert!(config.is_open());
         assert!(config.validate().is_ok());
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_empty_ssid() {
         let result = WifiConfig::new("", "password123");
         assert_eq!(result, Err(ConfigError::SsidEmpty));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_ssid_too_long() {
         let long_ssid = "a".repeat(33);
         let result = WifiConfig::new(long_ssid, "password123");
         assert!(matches!(result, Err(ConfigError::SsidTooLong { .. })));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_ssid_max_length() {
         let max_ssid = "a".repeat(32);
         let config = WifiConfig::new(max_ssid, "password123").unwrap();
         assert!(config.validate().is_ok());
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_password_too_short() {
         let result = WifiConfig::new("TestNetwork", "short");
         assert!(matches!(result, Err(ConfigError::PasswordTooShort { .. })));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_password_min_length() {
         let config = WifiConfig::new("TestNetwork", "12345678").unwrap();
         assert!(config.validate().is_ok());
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_password_too_long() {
         let long_password = "a".repeat(65);
         let result = WifiConfig::new("TestNetwork", long_password);
         assert!(matches!(result, Err(ConfigError::PasswordTooLong { .. })));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_password_max_length() {
         let max_password = "a".repeat(64);
         let config = WifiConfig::new("TestNetwork", max_password).unwrap();
@@ -361,7 +361,7 @@ mod tap_tests {
 
     // ==================== Serialization Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_serialize_deserialize() {
         let config = WifiConfig::new("MyNetwork", "MyPassword").unwrap();
         let bytes = config.to_bytes();
@@ -369,7 +369,7 @@ mod tap_tests {
         assert_eq!(config, restored);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_serialize_open_network() {
         let config = WifiConfig::open("OpenNet").unwrap();
         let bytes = config.to_bytes();
@@ -378,19 +378,19 @@ mod tap_tests {
         assert!(restored.is_open());
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_deserialize_empty() {
         let result = WifiConfig::from_bytes(&[]);
         assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_deserialize_truncated() {
         let result = WifiConfig::from_bytes(&[5, b'h', b'e', b'l', b'l']); // Missing 'o' and password
         assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_deserialize_ssid_too_long() {
         // Craft malicious input: ssid_len = 255 (exceeds MAX_SSID_LEN of 32)
         let mut bytes = vec![255u8]; // ssid_len = 255
@@ -402,7 +402,7 @@ mod tap_tests {
         assert!(matches!(result, Err(ConfigError::SsidTooLong { .. })));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_deserialize_password_too_long() {
         // Craft malicious input: password_len = 255 (exceeds MAX_PASSWORD_LEN of 64)
         let mut bytes = vec![4u8]; // ssid_len = 4
@@ -414,7 +414,7 @@ mod tap_tests {
         assert!(matches!(result, Err(ConfigError::PasswordTooLong { .. })));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_deserialize_exact_max_lengths() {
         // SSID at exactly MAX_SSID_LEN (32) and password at MAX_PASSWORD_LEN (64)
         let ssid = "a".repeat(MAX_SSID_LEN);
@@ -427,21 +427,21 @@ mod tap_tests {
 
     // ==================== WifiStatus Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_status_unconfigured() {
         let status = WifiStatus::Unconfigured;
         assert_eq!(status.to_ble_string(), "unconfigured");
         assert_eq!(WifiStatus::from_ble_string("unconfigured").unwrap(), status);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_status_connecting() {
         let status = WifiStatus::Connecting;
         assert_eq!(status.to_ble_string(), "connecting");
         assert_eq!(WifiStatus::from_ble_string("connecting").unwrap(), status);
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_status_connected() {
         let status = WifiStatus::Connected {
             ip: "192.168.1.100".to_string(),
@@ -453,7 +453,7 @@ mod tap_tests {
         );
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_status_failed() {
         let status = WifiStatus::Failed {
             reason: "wrong password".to_string(),
@@ -465,7 +465,7 @@ mod tap_tests {
         );
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_status_unknown() {
         let result = WifiStatus::from_ble_string("bogus");
         assert!(matches!(result, Err(ConfigError::InvalidFormat(_))));
@@ -473,7 +473,7 @@ mod tap_tests {
 
     // ==================== ConfigCommand Tests ====================
 
-    #[tap_test]
+    #[esp32_test]
     fn test_command_connect() {
         assert_eq!(
             ConfigCommand::from_str("connect").unwrap(),
@@ -489,7 +489,7 @@ mod tap_tests {
         );
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_command_disconnect() {
         assert_eq!(
             ConfigCommand::from_str("disconnect").unwrap(),
@@ -497,7 +497,7 @@ mod tap_tests {
         );
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_command_clear() {
         assert_eq!(
             ConfigCommand::from_str("clear").unwrap(),
@@ -505,13 +505,13 @@ mod tap_tests {
         );
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_command_unknown() {
         let result = ConfigCommand::from_str("reboot");
         assert!(matches!(result, Err(ConfigError::UnknownCommand(_))));
     }
 
-    #[tap_test]
+    #[esp32_test]
     fn test_command_as_str() {
         assert_eq!(ConfigCommand::Connect.as_str(), "connect");
         assert_eq!(ConfigCommand::Disconnect.as_str(), "disconnect");

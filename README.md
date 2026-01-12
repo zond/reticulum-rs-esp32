@@ -74,29 +74,44 @@ These paths apply when following the default installation instructions above:
 ## Build
 
 ```bash
-# Build for hardware (ESP32-S3, default)
-cargo build --release
+# Build for hardware (ESP32-S3)
+cargo build-esp32
 
 # Flash to device
 cargo espflash flash --release --monitor
+```
 
-# Run tests on host (TAP format output)
-# Use your host triple: x86_64-apple-darwin (macOS), x86_64-unknown-linux-gnu (Linux)
-cargo run --bin device-tests --no-default-features --features tap-tests \
-    --target x86_64-apple-darwin
+## Testing
 
-# Lint and format
-cargo clippy --no-default-features --target x86_64-apple-darwin -- -D warnings
+Tests use `#[esp32_test]` macro that works on both host and ESP32:
+
+```bash
+# Run tests on host (default, fastest)
+cargo test
+
+# Run tests in QEMU (ESP32 emulation)
+cargo test-qemu
+```
+
+For test architecture details, see [docs/testing-strategy.md](docs/testing-strategy.md).
+
+## Development
+
+```bash
+# Lint (host target for faster checks)
+cargo clippy -- -D warnings
+
+# Format
 cargo fmt
 ```
 
 ## Build Targets
 
-| Target | Use Case | Notes |
-|--------|----------|-------|
-| xtensa-esp32s3-espidf | Hardware (LILYGO T3-S3) | Default target |
-| xtensa-esp32-espidf | QEMU testing | ESP32-S3 QEMU has stdout bug |
-| Host native | Host tests | Use `--no-default-features --target <triple>` |
+| Target | Command | Notes |
+|--------|---------|-------|
+| Host tests | `cargo test` | Default, fastest iteration |
+| QEMU tests | `cargo test-qemu` | ESP32 emulation |
+| Release firmware | `cargo build-esp32` | Production build |
 
 For build configuration details, see [docs/research-findings.md](docs/research-findings.md).
 

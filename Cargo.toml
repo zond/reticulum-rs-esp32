@@ -14,14 +14,15 @@ path = "src/lib.rs"
 [[bin]]
 name = "reticulum-rs-esp32"
 path = "src/main.rs"
+test = false
 
 [[bin]]
-name = "device-tests"
-path = "src/bin/device-tests.rs"
-required-features = ["tap-tests"]
+name = "qemu-test-runner"
+path = "src/bin/qemu-test-runner.rs"
+test = false
 
 [features]
-default = ["esp32"]
+default = []
 esp32 = [
     "dep:esp-idf-sys",
     "dep:esp-idf-svc",
@@ -29,11 +30,6 @@ esp32 = [
     "dep:esp32-nimble",
     "dep:reticulum",
     "dep:rand_core",
-]
-# Enable TAP test code for device testing (host, QEMU, or hardware)
-tap-tests = [
-    "dep:reticulum-rs-esp32-macros",
-    "dep:inventory",
 ]
 
 [dependencies]
@@ -57,9 +53,8 @@ log = "0.4"
 # Security: zero sensitive data on drop
 zeroize = { version = "1.7", features = ["derive"] }
 
-# TAP testing support (only for tap-tests feature)
-reticulum-rs-esp32-macros = { path = "macros", optional = true }
-inventory = { version = "0.3", optional = true }
+# Test macro
+reticulum-rs-esp32-macros = { path = "macros" }
 
 [build-dependencies]
 embuild = { version = "0.33", features = ["espidf"] }

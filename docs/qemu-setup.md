@@ -61,25 +61,18 @@ tar -xf qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-linux-gnu.tar.xz \
 ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228/qemu/bin/qemu-system-xtensa
 ```
 
-### Build and Run
+### Run Tests in QEMU
 ```bash
-# Build for plain ESP32 + QEMU (uses cargo alias)
+# Run all tests in QEMU (builds, creates firmware, launches QEMU automatically)
 source ~/export-esp.sh
-cargo build-qemu
-
-# Create merged firmware image
-cargo espflash save-image --chip esp32 --merge --flash-size 4mb \
-    --target xtensa-esp32-espidf --release target/firmware-esp32.bin
-
-# Run in QEMU
-~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228/qemu/bin/qemu-system-xtensa \
-    -machine esp32 \
-    -nographic \
-    -serial mon:stdio \
-    -drive file=target/firmware-esp32.bin,if=mtd,format=raw
-
-# Exit QEMU: Ctrl-A then X
+cargo test-qemu
 ```
+
+The `cargo test-qemu` command automatically:
+1. Builds tests for ESP32 target
+2. Creates merged firmware image with `espflash save-image`
+3. Launches QEMU with the firmware
+4. Parses test output and exits with appropriate status code
 
 ---
 
@@ -87,15 +80,13 @@ cargo espflash save-image --chip esp32 --merge --flash-size 4mb \
 
 The project supports multiple targets:
 
-| Target | Use Case | Build Command |
-|--------|----------|---------------|
-| ESP32-S3 (default) | Hardware (LILYGO T3-S3) | `cargo build --release` |
-| ESP32 | QEMU testing | `cargo build-qemu` |
-| Host native | Host tests | `cargo test --no-default-features --target <triple>` |
+| Target | Use Case | Command |
+|--------|----------|---------|
+| Host | Host tests (fastest) | `cargo test` |
+| ESP32 | QEMU tests | `cargo test-qemu` |
+| ESP32-S3 | Release firmware | `cargo build-esp32` |
 
-Host target triples: `x86_64-apple-darwin` (macOS), `x86_64-unknown-linux-gnu` (Linux)
-
-The `build-qemu` alias (defined in `.cargo/config.toml`) builds for plain ESP32 with UART-only console.
+The `test-qemu` alias (defined in `.cargo/config.toml`) runs the QEMU test runner which builds for plain ESP32.
 
 Configuration files in `config/`:
 - `sdkconfig.defaults` - Common settings (BLE, WiFi, stack sizes)
@@ -158,15 +149,6 @@ Plain ESP32 lacks some features of ESP32-S3:
 
 For firmware testing, these differences are usually not significant. Hardware-specific features (LoRa, USB) aren't emulated anyway.
 
-## Research TODO
-
-### Running Tests in QEMU
-- How to build test binaries for ESP32 target
-- How to capture test output/pass/fail status
-- Whether `cargo test` can use QEMU as test runner
-- Look into `defmt-test` or similar embedded test frameworks
-- Check if ESP-IDF has test harness integration with QEMU
-
 ## References
 
 - [ESP-IDF QEMU Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/tools/qemu.html)
@@ -176,4 +158,4 @@ For firmware testing, these differences are usually not significant. Hardware-sp
 
 ---
 
-*Updated 2026-01-12*
+*Updated 2026-01-12: Simplified to `cargo test-qemu` command*
