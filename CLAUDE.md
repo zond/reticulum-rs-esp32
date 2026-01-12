@@ -48,4 +48,14 @@ Key constraints to keep in mind:
 - 512KB SRAM - be mindful of allocations
 - ESP-IDF provides std environment (not bare metal no_std)
 - BLE mesh is not upstream in reticulum-rs - needs custom implementation
-- See README.md for build commands and project dependencies
+
+For build commands, tool locations, and setup instructions, see [README.md](README.md).
+
+## Key Documentation
+
+| Document | Contents |
+|----------|----------|
+| [README.md](README.md) | Prerequisites, build commands, tool locations |
+| [docs/qemu-setup.md](docs/qemu-setup.md) | QEMU installation and usage |
+| [docs/research-findings.md](docs/research-findings.md) | Build configuration rationale |
+| [docs/implementation-guide.md](docs/implementation-guide.md) | Feature implementation plans |

@@ -24,18 +24,41 @@ Use **plain ESP32** target for QEMU testing. The ESP32-S3 QEMU emulation has a b
 
 ## Quick Start (Plain ESP32 for QEMU)
 
-### Prerequisites
+### Installation
+
+Choose your platform:
+
+#### macOS (x86_64)
 ```bash
-# Install macOS dependencies
+# Install dependencies
 brew install libgcrypt glib pixman sdl2 libslirp
 
-# Download QEMU 9.2.2 with ESP32 support (x86_64 macOS)
+# Download QEMU 9.2.2 with ESP32 support
 curl -LO https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20250228/qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-apple-darwin.tar.xz
 
-# Extract (adjust path as needed)
+# Extract to standard ESP tools location
 mkdir -p ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
 tar -xf qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-apple-darwin.tar.xz \
     -C ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
+```
+
+#### Linux (x86_64)
+```bash
+# Install dependencies (Debian/Ubuntu)
+sudo apt-get install libgcrypt20 libglib2.0-0 libpixman-1-0 libsdl2-2.0-0 libslirp0
+
+# Download QEMU 9.2.2 with ESP32 support
+curl -LO https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20250228/qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-linux-gnu.tar.xz
+
+# Extract to standard ESP tools location
+mkdir -p ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
+tar -xf qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-linux-gnu.tar.xz \
+    -C ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
+```
+
+**After installation, QEMU binary is at:**
+```
+~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228/qemu/bin/qemu-system-xtensa
 ```
 
 ### Build and Run
@@ -68,7 +91,9 @@ The project supports multiple targets:
 |--------|----------|---------------|
 | ESP32-S3 (default) | Hardware (LILYGO T3-S3) | `cargo build --release` |
 | ESP32 | QEMU testing | `cargo build-qemu` |
-| x86_64 | Host tests | `cargo test --no-default-features --target x86_64-apple-darwin` |
+| Host native | Host tests | `cargo test --no-default-features --target <triple>` |
+
+Host target triples: `x86_64-apple-darwin` (macOS), `x86_64-unknown-linux-gnu` (Linux)
 
 The `build-qemu` alias (defined in `.cargo/config.toml`) builds for plain ESP32 with UART-only console.
 
