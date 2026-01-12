@@ -121,8 +121,17 @@ pub fn calculate_airtime_us(payload_bytes: usize, params: &LoRaParams) -> u64 {
     };
 
     let t_payload_us = payload_symbols * t_sym_us;
+    let total_us = t_preamble_us + t_payload_us;
 
-    (t_preamble_us + t_payload_us) as u64
+    // Bounds check before casting - handle NaN/Infinity from extreme inputs
+    if !total_us.is_finite() || total_us < 0.0 {
+        return 0;
+    }
+    if total_us > u64::MAX as f64 {
+        return u64::MAX;
+    }
+
+    total_us as u64
 }
 
 /// Calculate airtime in milliseconds (convenience wrapper).

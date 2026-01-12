@@ -15,17 +15,16 @@
 //! - Bit 0: FIRST_FRAGMENT - This is the first fragment of a packet
 //! - Bit 1: MORE_FRAGMENTS - More fragments follow this one
 //!
-//! # Limitations
+//! # Source Address Tracking
 //!
-//! The current `Reassembler` does not track source addresses. This means:
-//! - Multiple concurrent reassemblies from different sources may interfere
-//! - For production use, the BLE layer should provide source addresses
-//! - Use `with_limits(timeout, 1, max_frags)` to enforce single reassembly
+//! The `Reassembler` tracks source addresses (BLE MAC addresses) to properly
+//! disambiguate concurrent reassemblies from different peers. Each fragment
+//! must be submitted with its source address.
 //!
 //! # Example
 //!
 //! ```
-//! use reticulum_rs_esp32::ble::{Fragmenter, Reassembler};
+//! use reticulum_rs_esp32::ble::{BleAddress, Fragmenter, Reassembler};
 //! use std::time::Duration;
 //!
 //! // Fragment a large packet
@@ -33,10 +32,11 @@
 //! let packet = vec![0u8; 100]; // 100-byte packet
 //! let fragments = fragmenter.fragment(&packet).unwrap();
 //!
-//! // Reassemble fragments
+//! // Reassemble fragments (with source address)
+//! let source = BleAddress::new([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
 //! let mut reassembler = Reassembler::new(Duration::from_secs(5));
 //! for fragment in fragments {
-//!     if let Some(complete) = reassembler.add_fragment(fragment) {
+//!     if let Some(complete) = reassembler.add_fragment(source, fragment) {
 //!         assert_eq!(complete, packet);
 //!     }
 //! }
@@ -44,6 +44,40 @@
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
+/// BLE device address (MAC address).
+///
+/// A 6-byte Bluetooth device address used to identify the source of fragments
+/// for proper reassembly disambiguation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BleAddress([u8; 6]);
+
+impl BleAddress {
+    /// Create a new BLE address from raw bytes.
+    pub const fn new(bytes: [u8; 6]) -> Self {
+        Self(bytes)
+    }
+
+    /// Get the raw bytes of the address.
+    pub const fn as_bytes(&self) -> &[u8; 6] {
+        &self.0
+    }
+
+    /// Create a zero address (useful for testing single-source scenarios).
+    pub const fn zero() -> Self {
+        Self([0; 6])
+    }
+}
+
+impl std::fmt::Display for BleAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
+        )
+    }
+}
 
 /// Header size in bytes (sequence + flags).
 pub const HEADER_SIZE: usize = 2;
@@ -89,16 +123,19 @@ impl Fragment {
     }
 
     /// Check if this is the first fragment of a packet.
+    #[inline]
     pub fn is_first(&self) -> bool {
         self.flags & FLAG_FIRST_FRAGMENT != 0
     }
 
     /// Check if more fragments follow this one.
+    #[inline]
     pub fn has_more(&self) -> bool {
         self.flags & FLAG_MORE_FRAGMENTS != 0
     }
 
-    /// Check if flags are valid\  (only defined bits set).
+    /// Check if flags are valid (only defined bits set).
+    #[inline]
     pub fn has_valid_flags(&self) -> bool {
         self.flags & !VALID_FLAGS_MASK == 0
     }
@@ -253,10 +290,12 @@ impl Fragmenter {
 
 /// Key for identifying a pending packet reassembly.
 ///
-/// Note: In a production implementation, this should include source address
-/// to properly disambiguate concurrent reassemblies from different peers.
+/// Combines source address and first sequence number to uniquely identify
+/// a reassembly session, allowing concurrent reassemblies from different peers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ReassemblyKey {
+    /// Source BLE address.
+    source: BleAddress,
     /// Sequence number of the first fragment.
     first_sequence: u8,
 }
@@ -377,6 +416,11 @@ impl Reassembler {
 
     /// Add a fragment and return the complete packet if reassembly is done.
     ///
+    /// # Arguments
+    ///
+    /// * `source` - BLE address of the device that sent this fragment
+    /// * `fragment` - The fragment to add
+    ///
     /// Returns `Some(packet)` when a packet is fully reassembled,
     /// `None` if more fragments are needed or fragment was rejected.
     ///
@@ -384,7 +428,7 @@ impl Reassembler {
     /// - They have invalid flags
     /// - The reassembly would exceed fragment limits
     /// - No matching reassembly exists for non-first fragments
-    pub fn add_fragment(&mut self, fragment: Fragment) -> Option<Vec<u8>> {
+    pub fn add_fragment(&mut self, source: BleAddress, fragment: Fragment) -> Option<Vec<u8>> {
         // Validate flags
         if !fragment.has_valid_flags() {
             return None;
@@ -401,6 +445,7 @@ impl Reassembler {
 
             // Start a new reassembly
             let key = ReassemblyKey {
+                source,
                 first_sequence: fragment.sequence,
             };
 
@@ -411,7 +456,7 @@ impl Reassembler {
                 }
             }
 
-            // Don't overwrite existing reassembly with same first sequence
+            // Don't overwrite existing reassembly with same key
             if self.pending.contains_key(&key) {
                 return None;
             }
@@ -424,7 +469,7 @@ impl Reassembler {
             None
         } else {
             // Find the pending reassembly this fragment belongs to
-            let key = self.find_key_for_fragment(&fragment)?;
+            let key = self.find_key_for_fragment(source, &fragment)?;
 
             let pending = self.pending.get_mut(&key)?;
 
@@ -443,8 +488,10 @@ impl Reassembler {
             }
 
             if pending.is_complete() {
-                // Use ok() to silently handle missing fragments (shouldn't happen if is_complete is correct)
-                let packet = pending.assemble().ok()?;
+                // Use expect() - if is_complete() is true but assemble() fails, that's a bug
+                let packet = pending
+                    .assemble()
+                    .expect("BUG: is_complete() returned true but assemble() failed");
                 self.pending.remove(&key);
                 Some(packet)
             } else {
@@ -453,13 +500,21 @@ impl Reassembler {
         }
     }
 
-    /// Find the reassembly key for a non-first fragment.
+    /// Find the reassembly key for a non-first fragment from a specific source.
     ///
-    /// This is a simplified approach that works when fragments arrive in order
-    /// or when there's only one pending reassembly. For production use with
-    /// multiple concurrent sources, the BLE layer should provide source addresses.
-    fn find_key_for_fragment(&self, fragment: &Fragment) -> Option<ReassemblyKey> {
+    /// Since we know the source address, we only search among reassemblies from
+    /// this source. This is typically O(1) since most sources only have one
+    /// active reassembly at a time.
+    fn find_key_for_fragment(
+        &self,
+        source: BleAddress,
+        fragment: &Fragment,
+    ) -> Option<ReassemblyKey> {
         for key in self.pending.keys() {
+            // Only consider reassemblies from this source
+            if key.source != source {
+                continue;
+            }
             // Check if this fragment's sequence is within reasonable range
             // of the first fragment's sequence (within MAX_SEQUENCE_DISTANCE)
             let seq_diff = fragment.sequence.wrapping_sub(key.first_sequence);
@@ -500,6 +555,12 @@ impl Reassembler {
 mod tap_tests {
     use super::*;
     use reticulum_rs_esp32_macros::tap_test;
+
+    /// Default source address for tests (simulates a single BLE peer).
+    const TEST_SOURCE: BleAddress = BleAddress::new([0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+
+    /// Second source address for multi-peer tests.
+    const TEST_SOURCE_2: BleAddress = BleAddress::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
 
     // ==================== Fragment Tests ====================
 
@@ -677,7 +738,7 @@ mod tap_tests {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
         let fragment = Fragment::new(0, FLAG_FIRST_FRAGMENT, vec![1, 2, 3]);
 
-        let result = reassembler.add_fragment(fragment);
+        let result = reassembler.add_fragment(TEST_SOURCE, fragment);
         assert_eq!(result, Some(vec![1, 2, 3]));
         assert_eq!(reassembler.pending_count(), 0);
     }
@@ -690,13 +751,13 @@ mod tap_tests {
         let frag2 = Fragment::new(1, FLAG_MORE_FRAGMENTS, vec![3, 4]);
         let frag3 = Fragment::new(2, 0, vec![5, 6]);
 
-        assert_eq!(reassembler.add_fragment(frag1), None);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, frag1), None);
         assert_eq!(reassembler.pending_count(), 1);
 
-        assert_eq!(reassembler.add_fragment(frag2), None);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, frag2), None);
         assert_eq!(reassembler.pending_count(), 1);
 
-        let result = reassembler.add_fragment(frag3);
+        let result = reassembler.add_fragment(TEST_SOURCE, frag3);
         assert_eq!(result, Some(vec![1, 2, 3, 4, 5, 6]));
         assert_eq!(reassembler.pending_count(), 0);
     }
@@ -710,9 +771,9 @@ mod tap_tests {
         let frag3 = Fragment::new(2, 0, vec![5, 6]);
         let frag2 = Fragment::new(1, FLAG_MORE_FRAGMENTS, vec![3, 4]);
 
-        assert_eq!(reassembler.add_fragment(frag1), None);
-        assert_eq!(reassembler.add_fragment(frag3), None); // Have first and last
-        let result = reassembler.add_fragment(frag2); // Complete!
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, frag1), None);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, frag3), None); // Have first and last
+        let result = reassembler.add_fragment(TEST_SOURCE, frag2); // Complete!
         assert_eq!(result, Some(vec![1, 2, 3, 4, 5, 6]));
     }
 
@@ -724,9 +785,9 @@ mod tap_tests {
         let frag1_dup = Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![1, 2]);
         let frag2 = Fragment::new(1, 0, vec![3, 4]);
 
-        assert_eq!(reassembler.add_fragment(frag1), None);
-        assert_eq!(reassembler.add_fragment(frag1_dup), None); // Duplicate rejected
-        let result = reassembler.add_fragment(frag2);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, frag1), None);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, frag1_dup), None); // Duplicate rejected
+        let result = reassembler.add_fragment(TEST_SOURCE, frag2);
         assert_eq!(result, Some(vec![1, 2, 3, 4]));
     }
 
@@ -736,7 +797,7 @@ mod tap_tests {
 
         // Non-first fragment with no pending reassembly
         let orphan = Fragment::new(5, FLAG_MORE_FRAGMENTS, vec![1, 2, 3]);
-        assert_eq!(reassembler.add_fragment(orphan), None);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, orphan), None);
         assert_eq!(reassembler.pending_count(), 0);
     }
 
@@ -746,30 +807,31 @@ mod tap_tests {
 
         // Fragment with undefined flags
         let invalid = Fragment::new(0, 0xFF, vec![1, 2, 3]);
-        assert_eq!(reassembler.add_fragment(invalid), None);
+        assert_eq!(reassembler.add_fragment(TEST_SOURCE, invalid), None);
         assert_eq!(reassembler.pending_count(), 0);
     }
 
     #[tap_test]
     fn test_reassembler_max_pending_limit() {
         let mut reassembler = Reassembler::with_limits(Duration::from_secs(5), 2, 32);
+        // Use different source addresses to test limit across sources
+        let src1 = BleAddress::new([1, 0, 0, 0, 0, 0]);
+        let src2 = BleAddress::new([2, 0, 0, 0, 0, 0]);
+        let src3 = BleAddress::new([3, 0, 0, 0, 0, 0]);
 
         // Start 3 reassemblies (one over limit)
-        reassembler.add_fragment(Fragment::new(
-            0,
-            FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS,
-            vec![1],
-        ));
-        reassembler.add_fragment(Fragment::new(
-            10,
-            FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS,
-            vec![2],
-        ));
-        reassembler.add_fragment(Fragment::new(
-            20,
-            FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS,
-            vec![3],
-        ));
+        reassembler.add_fragment(
+            src1,
+            Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![1]),
+        );
+        reassembler.add_fragment(
+            src2,
+            Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![2]),
+        );
+        reassembler.add_fragment(
+            src3,
+            Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![3]),
+        );
 
         // Should have evicted oldest
         assert_eq!(reassembler.pending_count(), 2);
@@ -780,15 +842,14 @@ mod tap_tests {
         let mut reassembler = Reassembler::with_limits(Duration::from_secs(5), 8, 2);
 
         // Start reassembly with first fragment
-        reassembler.add_fragment(Fragment::new(
-            0,
-            FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS,
-            vec![1],
-        ));
+        reassembler.add_fragment(
+            TEST_SOURCE,
+            Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![1]),
+        );
         // Add second fragment
-        reassembler.add_fragment(Fragment::new(1, FLAG_MORE_FRAGMENTS, vec![2]));
+        reassembler.add_fragment(TEST_SOURCE, Fragment::new(1, FLAG_MORE_FRAGMENTS, vec![2]));
         // Third fragment exceeds limit - should drop entire reassembly
-        reassembler.add_fragment(Fragment::new(2, 0, vec![3]));
+        reassembler.add_fragment(TEST_SOURCE, Fragment::new(2, 0, vec![3]));
 
         assert_eq!(reassembler.pending_count(), 0);
     }
@@ -798,7 +859,7 @@ mod tap_tests {
         let mut reassembler = Reassembler::new(Duration::from_secs(5));
 
         let frag = Fragment::new(0, FLAG_FIRST_FRAGMENT | FLAG_MORE_FRAGMENTS, vec![1, 2]);
-        reassembler.add_fragment(frag);
+        reassembler.add_fragment(TEST_SOURCE, frag);
         assert_eq!(reassembler.pending_count(), 1);
 
         reassembler.clear();
@@ -819,7 +880,7 @@ mod tap_tests {
 
         let mut result = None;
         for fragment in fragments {
-            result = reassembler.add_fragment(fragment);
+            result = reassembler.add_fragment(TEST_SOURCE, fragment);
         }
 
         assert_eq!(result, Some(original));
@@ -836,17 +897,17 @@ mod tap_tests {
         let frags1 = fragmenter.fragment(&packet1).unwrap();
         let frags2 = fragmenter.fragment(&packet2).unwrap();
 
-        // Interleave fragments (send first of each, then rest)
-        reassembler.add_fragment(frags1[0].clone());
-        reassembler.add_fragment(frags2[0].clone());
+        // Interleave fragments from different sources
+        reassembler.add_fragment(TEST_SOURCE, frags1[0].clone());
+        reassembler.add_fragment(TEST_SOURCE_2, frags2[0].clone());
         assert_eq!(reassembler.pending_count(), 2);
 
-        // Complete packet 1
-        let result1 = reassembler.add_fragment(frags1[1].clone());
+        // Complete packet 1 from first source
+        let result1 = reassembler.add_fragment(TEST_SOURCE, frags1[1].clone());
         assert_eq!(result1, Some(packet1));
 
-        // Complete packet 2
-        let result2 = reassembler.add_fragment(frags2[1].clone());
+        // Complete packet 2 from second source
+        let result2 = reassembler.add_fragment(TEST_SOURCE_2, frags2[1].clone());
         assert_eq!(result2, Some(packet2));
 
         assert_eq!(reassembler.pending_count(), 0);
@@ -867,7 +928,7 @@ mod tap_tests {
 
         let mut result = None;
         for fragment in fragments {
-            result = reassembler.add_fragment(fragment);
+            result = reassembler.add_fragment(TEST_SOURCE, fragment);
         }
 
         assert_eq!(result.as_ref().map(|v| v.len()), Some(500));
@@ -890,7 +951,7 @@ mod tap_tests {
 
         let mut result = None;
         for fragment in fragments {
-            result = reassembler.add_fragment(fragment);
+            result = reassembler.add_fragment(TEST_SOURCE, fragment);
         }
 
         assert_eq!(result, Some(packet));

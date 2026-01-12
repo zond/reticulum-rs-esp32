@@ -5,4 +5,4 @@
 
 mod fragmentation;
 
-pub use fragmentation::{Fragment, FragmentError, Fragmenter, Reassembler};
+pub use fragmentation::{BleAddress, Fragment, FragmentError, Fragmenter, Reassembler};

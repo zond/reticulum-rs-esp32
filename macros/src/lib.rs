@@ -134,12 +134,31 @@ fn parse_should_panic(attr: TokenStream) -> ShouldPanic {
                 }) = nv.value
                 {
                     return ShouldPanic::WithMessage(s.value());
+                } else {
+                    // Invalid value type (e.g., should_panic = 42)
+                    panic!(
+                        "tap_test: should_panic expects a string literal, \
+                         e.g., #[tap_test(should_panic = \"expected message\")]"
+                    );
                 }
             }
         }
-        // Fallback if parsing fails but we see should_panic
-        return ShouldPanic::Yes;
+        // Fallback: bare should_panic parsed as path
+        if let Ok(Meta::Path(p)) = syn::parse(attr_str.parse().unwrap()) {
+            if p.is_ident("should_panic") {
+                return ShouldPanic::Yes;
+            }
+        }
+        // Unknown attribute format
+        panic!(
+            "tap_test: invalid should_panic syntax. Use #[tap_test(should_panic)] \
+             or #[tap_test(should_panic = \"message\")]"
+        );
     }
 
-    ShouldPanic::No
+    // Unknown attribute
+    panic!(
+        "tap_test: unknown attribute '{}'. Supported: should_panic, should_panic = \"message\"",
+        attr_str
+    );
 }

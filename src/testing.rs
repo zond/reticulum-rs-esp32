@@ -86,6 +86,10 @@ pub fn run_all_tests() -> bool {
     let mut runner = TestRunner::new();
     let count = test_count();
 
+    if count == 0 {
+        eprintln!("WARNING: No tests registered. Did you forget #[tap_test]?");
+    }
+
     runner.print_header(count);
 
     for entry in inventory::iter::<TapTestEntry> {
