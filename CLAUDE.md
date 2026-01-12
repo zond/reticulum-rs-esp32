@@ -2,6 +2,21 @@
 
 ## Development Workflow
 
+Run the `date` command to understand what date it is today.
+
+### Documentation ideals
+
+README.md contains all project overview, build instructions, and basic know how necessary
+to initially understand what the project is about.
+
+CLAUDE.md contains all information an agent needs to work in the project that doesn't fit
+in README.md.
+
+docs/* contains specialized knowledge, TODO files, research results, future ideas, and
+anything else that is documents but don't fit in README.md or CLAUDE.md.
+
+README.md and CLAUDE.md should refer to docs/* files when useful.
+
 ### Before Every Commit
 
 1. Run tests and linting (see README.md for commands)
@@ -20,6 +35,12 @@
 - Each commit should be well-tested
 - Write clear, descriptive commit messages
 - Prefer many small commits over large monolithic ones
+- Make sure that no code commited in the project refers to absolute paths, or paths
+  outside the project directory. Documentation about how to install or manage deps
+  may provide examples or instructions that refer to absolute paths or paths outside
+  the project directory.
+- Never use Rust unsafe code unless it's really necessary, and very well motivated
+  in comments.
 
 ## Project Context
 

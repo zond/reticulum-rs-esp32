@@ -1,118 +1,154 @@
 # QEMU Emulator Setup
 
-## Current Status (2026-01-11)
+## Current Status (2026-01-12)
 
-**Progress:** QEMU installed but needs upgrade for ESP32-S3 support.
+**Status:** QEMU 9.2.2 with ESP32 support works fully. ESP32-S3 has a known stdout bug.
 
-### What's Working
-- QEMU 8.1.3 installed via `idf_tools.py` at: `/Users/zond/.espressif/tools/qemu-xtensa/esp_develop_8.1.3_20231206/qemu/bin/qemu-system-xtensa`
-- Dependencies installed via Homebrew: `libgcrypt glib pixman sdl2 libslirp`
-- Firmware builds successfully: `cargo espflash save-image --chip esp32s3 --merge --flash-size 4mb --release target/firmware.bin`
+### Recommendation
 
-### Problem
-QEMU 8.1.3 only supports plain ESP32, not ESP32-S3:
-```
-$ qemu-system-xtensa -machine help
-Supported machines are:
-esp32                Espressif ESP32 machine
-...
-```
+Use **plain ESP32** target for QEMU testing. The ESP32-S3 QEMU emulation has a bug where application stdout doesn't appear after the bootloader completes.
 
-### Solution: Upgrade QEMU
-Need to install newer QEMU version with ESP32-S3 support.
+| Target | QEMU Machine | Status |
+|--------|--------------|--------|
+| xtensa-esp32-espidf | esp32 | Works fully |
+| xtensa-esp32s3-espidf | esp32s3 | Bootloader only (stdout bug) |
 
-**Available releases from [espressif/qemu](https://github.com/espressif/qemu/releases):**
-- `esp-develop-9.2.2-20250817` (latest) - ESP32, ESP32-C3
-- `esp-develop-9.2.2-20250228` - ESP32, ESP32-C3, **ESP32-S3** (has S3 support!)
-
-### Next Steps
-
-1. **Download newer QEMU with S3 support:**
-   ```bash
-   # For x86_64 macOS:
-   curl -LO https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20250228/qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-apple-darwin.tar.xz
-
-   # Extract to ~/.espressif/tools/qemu-xtensa/
-   mkdir -p ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
-   tar -xf qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-apple-darwin.tar.xz -C ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
-   ```
-
-2. **Run firmware in QEMU:**
-   ```bash
-   # Create merged firmware image
-   cargo espflash save-image --chip esp32s3 --merge --flash-size 4mb --release target/firmware.bin
-
-   # Run in QEMU (adjust path to new version)
-   ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228/qemu/bin/qemu-system-xtensa \
-     -machine esp32s3 \
-     -nographic \
-     -drive file=target/firmware.bin,if=mtd,format=raw
-   ```
-
-3. **Add convenience scripts** (optional):
-   - Add QEMU path to shell config or create wrapper script
-   - Add `cargo qemu` alias for quick testing
+### What's Working (ESP32)
+- Full bootloader output
+- Application println! output
+- log crate integration via esp_idf_svc::log
+- Heartbeat loop runs correctly
+- All console output visible
 
 ---
 
-## Installation Reference
+## Quick Start (Plain ESP32 for QEMU)
 
-### Dependencies (macOS)
+### Prerequisites
 ```bash
+# Install macOS dependencies
 brew install libgcrypt glib pixman sdl2 libslirp
+
+# Download QEMU 9.2.2 with ESP32 support (x86_64 macOS)
+curl -LO https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20250228/qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-apple-darwin.tar.xz
+
+# Extract (adjust path as needed)
+mkdir -p ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
+tar -xf qemu-xtensa-softmmu-esp_develop_9.2.2_20250228-x86_64-apple-darwin.tar.xz \
+    -C ~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228
 ```
 
-### Install QEMU via ESP-IDF tools
+### Build and Run
 ```bash
-python3 .embuild/espressif/esp-idf/v5.2/tools/idf_tools.py install qemu-xtensa
+# Build for plain ESP32 + QEMU (uses cargo alias)
+source ~/export-esp.sh
+cargo build-qemu
+
+# Create merged firmware image
+cargo espflash save-image --chip esp32 --merge --flash-size 4mb \
+    --target xtensa-esp32-espidf --release target/firmware-esp32.bin
+
+# Run in QEMU
+~/.espressif/tools/qemu-xtensa/esp_develop_9.2.2_20250228/qemu/bin/qemu-system-xtensa \
+    -machine esp32 \
+    -nographic \
+    -serial mon:stdio \
+    -drive file=target/firmware-esp32.bin,if=mtd,format=raw
+
+# Exit QEMU: Ctrl-A then X
 ```
 
-Note: This installs an older version (8.1.3) that doesn't support ESP32-S3.
+---
 
-### Build Firmware for QEMU
+## Build Configuration
+
+The project supports multiple targets:
+
+| Target | Use Case | Build Command |
+|--------|----------|---------------|
+| ESP32-S3 (default) | Hardware (LILYGO T3-S3) | `cargo build --release` |
+| ESP32 | QEMU testing | `cargo build-qemu` |
+| x86_64 | Host tests | `cargo test --no-default-features --target x86_64-apple-darwin` |
+
+The `build-qemu` alias (defined in `.cargo/config.toml`) builds for plain ESP32 with UART-only console.
+
+Configuration files in `config/`:
+- `sdkconfig.defaults` - Common settings (BLE, WiFi, stack sizes)
+- `sdkconfig.qemu` - QEMU overrides (disables USB_SERIAL_JTAG)
+
+---
+
+## ESP32-S3 QEMU Bug (Reference)
+
+The ESP32-S3 QEMU machine has a known bug where application stdout doesn't appear after the bootloader. Boot messages up through `spi_flash: flash io: dio` are visible, but Rust application output is not.
+
+**Attempted fixes that did NOT work:**
+- Configured `CONFIG_ESP_CONSOLE_SECONDARY_NONE=y` to disable USB_SERIAL_JTAG
+- Tried `-serial mon:stdio` QEMU flag
+- Verified `CONFIG_LOG_DEFAULT_LEVEL_INFO=y` in sdkconfig
+- Simplified main.rs to match esp-idf-sys example pattern
+- Used `esp_rom_printf` for direct ROM output
+
+**Workaround:** Use plain ESP32 target for QEMU testing.
+
+---
+
+## QEMU Command Reference
+
 ```bash
-# Build release
-cargo build --release
+# Basic run with serial output (ESP32)
+qemu-system-xtensa -machine esp32 -nographic \
+    -drive file=target/firmware-esp32.bin,if=mtd,format=raw
 
-# Create merged flash image (required for QEMU)
-cargo espflash save-image --chip esp32s3 --merge --flash-size 4mb --release target/firmware.bin
-```
-
-### QEMU Command Reference
-```bash
-# Basic run with serial output
-qemu-system-xtensa -machine esp32s3 -nographic -drive file=target/firmware.bin,if=mtd,format=raw
+# With explicit serial config
+qemu-system-xtensa -machine esp32 -nographic -serial mon:stdio \
+    -drive file=target/firmware-esp32.bin,if=mtd,format=raw
 
 # With GDB server for debugging
-qemu-system-xtensa -machine esp32s3 -nographic -drive file=target/firmware.bin,if=mtd,format=raw -s -S
+qemu-system-xtensa -machine esp32 -nographic \
+    -drive file=target/firmware-esp32.bin,if=mtd,format=raw -s -S
 
 # Connect GDB
-xtensa-esp32s3-elf-gdb target/xtensa-esp32s3-espidf/release/reticulum-rs-esp32 -ex "target remote :1234"
+xtensa-esp32-elf-gdb target/xtensa-esp32-espidf/release/reticulum-rs-esp32 \
+    -ex "target remote :1234"
 ```
 
 ---
 
 ## Known Limitations
 
-- QEMU emulation is slower than real hardware (~4-5x)
-- BLE/WiFi radio emulation may be limited or absent
-- Virtual eFuse mode for flash encryption is for testing only (not real security)
-- Some peripherals not fully emulated
+- **ESP32-S3 stdout bug** - Use plain ESP32 for QEMU testing
+- **QEMU emulation is slower** - ~4-5x slower than real hardware
+- **BLE not emulated** - NimBLE stack loads but no radio
+- **WiFi not emulated** - ESP-IDF WiFi driver loads but no radio
+- **Some peripherals missing** - GPIO, SPI work; USB_SERIAL_JTAG doesn't
+- **No LoRa** - SX1262 peripheral not emulated
 
-## Features to Test in QEMU
+## Hardware Differences
 
-- [ ] Basic firmware boot and logging
-- [ ] NVS read/write operations
-- [ ] Identity persistence (load/save/create)
-- [ ] WiFi configuration BLE service (BLE may have limited support)
-- [ ] LoRa duty cycle limiter logic (no actual radio, but timing logic)
+Plain ESP32 lacks some features of ESP32-S3:
+- No USB OTG (ESP32-S3 has built-in USB)
+- Smaller SRAM (520KB vs 512KB usable)
+- Older dual-core Xtensa LX6 vs LX7
+
+For firmware testing, these differences are usually not significant. Hardware-specific features (LoRa, USB) aren't emulated anyway.
+
+## Research TODO
+
+### Running Tests in QEMU
+- How to build test binaries for ESP32 target
+- How to capture test output/pass/fail status
+- Whether `cargo test` can use QEMU as test runner
+- Look into `defmt-test` or similar embedded test frameworks
+- Check if ESP-IDF has test harness integration with QEMU
 
 ## References
 
 - [ESP-IDF QEMU Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/tools/qemu.html)
+- [ESP-IDF stdio Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/stdio.html)
 - [Espressif QEMU Releases](https://github.com/espressif/qemu/releases)
-- [Flash Encryption Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html)
+- [esp-idf-sys BUILD-OPTIONS.md](https://github.com/esp-rs/esp-idf-sys/blob/master/BUILD-OPTIONS.md)
 
 ---
 
-*Updated 2026-01-11*
+*Updated 2026-01-12*

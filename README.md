@@ -37,7 +37,7 @@ Firmware for the LILYGO T3-S3 ESP32-S3 LoRa board that implements a Reticulum tr
 ## Build
 
 ```bash
-# Build for ESP32-S3
+# Build for hardware (ESP32-S3, default)
 cargo build --release
 
 # Flash to device
@@ -49,6 +49,23 @@ cargo test --no-default-features --target x86_64-apple-darwin
 # Lint and format
 cargo clippy --no-default-features --target x86_64-apple-darwin -- -D warnings
 cargo fmt
+```
+
+## Build Targets
+
+| Target | Use Case | Notes |
+|--------|----------|-------|
+| xtensa-esp32s3-espidf | Hardware (LILYGO T3-S3) | Default target |
+| xtensa-esp32-espidf | QEMU testing | ESP32-S3 QEMU has stdout bug |
+| x86_64-apple-darwin | Host tests | Use `--no-default-features` |
+
+## QEMU Emulation
+
+For development without hardware. Uses plain ESP32 target (ESP32-S3 has a QEMU stdout bug). See [docs/qemu-setup.md](docs/qemu-setup.md) for full setup instructions.
+
+```bash
+# Build for QEMU (plain ESP32 with UART console)
+cargo build-qemu
 ```
 
 ## Architecture
