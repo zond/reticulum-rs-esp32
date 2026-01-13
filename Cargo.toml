@@ -43,9 +43,17 @@ esp32 = [
     "dep:esp-idf-svc",
     "dep:esp-idf-hal",
     "dep:esp32-nimble",
+    "dep:sx1262",
+    "dep:regiface",
     "dep:reticulum",
     "dep:rand_core",
 ]
+
+# Region selection (pick one, EU868 is default)
+region-eu868 = []
+region-us915 = []
+region-au915 = []
+region-as923 = []
 
 [dependencies]
 # ESP-IDF framework (only for esp32 target)
@@ -55,6 +63,11 @@ esp-idf-hal = { version = "0.45", optional = true }
 
 # BLE support (only for esp32 target)
 esp32-nimble = { version = "0.11", optional = true }
+
+# LoRa radio driver (SX1262, only for esp32 target)
+sx1262 = { version = "0.3", optional = true }
+# Register interface traits (for raw SX1262 commands)
+regiface = { version = "0.2.5", optional = true }
 
 # Reticulum-rs (using fork with ESP32 compatibility patches)
 reticulum = { git = "https://github.com/zond/Reticulum-rs", branch = "esp32-compat", default-features = false, features = ["alloc"], optional = true }

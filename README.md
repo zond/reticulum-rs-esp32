@@ -71,47 +71,60 @@ These paths apply when following the default installation instructions above:
 | ESP-IDF tools | `~/.espressif/tools/` | First `cargo build` (step 3) |
 | QEMU (if installed) | `~/.espressif/tools/qemu-xtensa/.../qemu/bin/` | [docs/qemu-setup.md](docs/qemu-setup.md) |
 
-## Build
+## Cargo Aliases
+
+This project provides cargo aliases for common operations (defined in `.cargo/config.toml`):
+
+### Building
 
 ```bash
-# Build for hardware (ESP32-S3)
-cargo build-esp32
-
-# Flash to device
-cargo espflash flash --release --monitor
+cargo build-esp32   # Build release for hardware (ESP32-S3)
+cargo build-qemu    # Build release for QEMU emulation (plain ESP32)
 ```
 
-## Testing
-
-Tests use `#[esp32_test]` macro that works on both host and ESP32:
+### Flashing
 
 ```bash
-# Run tests on host (default, fastest)
-cargo test
+cargo flash-esp32   # Build and flash to connected device
+cargo flash-qemu    # Build and run in QEMU emulator
+```
 
-# Run tests in QEMU (ESP32 emulation)
-cargo test-qemu
+### Testing
+
+```bash
+cargo test          # Run tests on host (fastest iteration)
+cargo test-qemu     # Run tests in QEMU (ESP32 emulation)
 ```
 
 For test architecture details, see [docs/testing-strategy.md](docs/testing-strategy.md).
 
-## Development
+### Development
 
 ```bash
-# Lint (host target for faster checks)
-cargo clippy -- -D warnings
-
-# Format
-cargo fmt
+cargo clippy -- -D warnings   # Lint (host target for faster checks)
+cargo fmt                     # Format code
 ```
 
-## Build Targets
+### Region Selection
 
-| Target | Command | Notes |
-|--------|---------|-------|
-| Host tests | `cargo test` | Default, fastest iteration |
-| QEMU tests | `cargo test-qemu` | ESP32 emulation |
-| Release firmware | `cargo build-esp32` | Production build |
+Build for a different LoRa region (default is EU868):
+
+```bash
+cargo build-esp32 --features region-us915   # US 902-928 MHz
+cargo build-esp32 --features region-au915   # Australia 915-928 MHz
+cargo build-esp32 --features region-as923   # Asia 920-923 MHz
+```
+
+### Summary Table
+
+| Command | Description |
+|---------|-------------|
+| `cargo test` | Run host tests (fastest) |
+| `cargo test-qemu` | Run tests in QEMU |
+| `cargo build-esp32` | Build release firmware |
+| `cargo build-qemu` | Build for QEMU |
+| `cargo flash-esp32` | Build and flash to device |
+| `cargo flash-qemu` | Build and run in QEMU |
 
 For build configuration details, see [docs/research-findings.md](docs/research-findings.md).
 

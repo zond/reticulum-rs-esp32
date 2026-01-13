@@ -1394,6 +1394,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "regiface"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68cb3999c0f452b340f94d960205a0c499b89ddb6d8c8247a95c788fc7378e4e"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "regiface-macros",
+]
+
+[[package]]
+name = "regiface-macros"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e24cb5b14e574b1f2ab517062181b2ff287c93a56366a87c5f41b99e88aaaa04"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "remove_dir_all"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1441,8 +1463,10 @@ dependencies = [
  "esp32-nimble",
  "log",
  "rand_core",
+ "regiface",
  "reticulum",
  "reticulum-rs-esp32-macros",
+ "sx1262",
  "zeroize",
 ]
 
@@ -1674,6 +1698,18 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sx1262"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4d6ea9084fe378284c31acaf401ce97e652e18674af93b17b460a50d4afce46"
+dependencies = [
+ "bitflags 2.10.0",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "regiface",
+]
 
 [[package]]
 name = "syn"
