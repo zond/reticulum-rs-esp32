@@ -21,4 +21,7 @@ CONFIG_BT_BLE_ENABLED=y
 # Increase memory for networking
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
+# Disable USB secondary console (not supported in QEMU, not needed for hardware either)
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
 # For production builds with NVS encryption, use: cargo production-flash

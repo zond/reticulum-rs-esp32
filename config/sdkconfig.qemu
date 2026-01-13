@@ -1,5 +1,0 @@
-# QEMU-specific configuration overrides
-# QEMU only emulates UART0, not USB_SERIAL_JTAG
-
-# Disable USB secondary console (not supported in QEMU)
-CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

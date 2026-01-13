@@ -88,9 +88,7 @@ The project supports multiple targets:
 
 The `test-qemu` alias (defined in `.cargo/config.toml`) runs the QEMU test runner which builds for plain ESP32.
 
-Configuration files in `config/`:
-- `sdkconfig.defaults` - Common settings (BLE, WiFi, stack sizes)
-- `sdkconfig.qemu` - QEMU overrides (disables USB_SERIAL_JTAG)
+Configuration in `config/sdkconfig.defaults` includes settings for both QEMU and hardware (BLE, WiFi, stack sizes, console config).
 
 ---
 
@@ -158,4 +156,4 @@ For firmware testing, these differences are usually not significant. Hardware-sp
 
 ---
 
-*Updated 2026-01-12: Simplified to `cargo test-qemu` command*
+*Updated 2026-01-13: Unified sdkconfig for QEMU and hardware builds*

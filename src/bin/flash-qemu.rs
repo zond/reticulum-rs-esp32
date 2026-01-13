@@ -16,8 +16,6 @@ fn main() {
             "--no-default-features",
             "--features",
             "esp32",
-            "--config",
-            "env.ESP_IDF_SDKCONFIG_DEFAULTS='config/sdkconfig.defaults;config/sdkconfig.qemu'",
         ])
         .status();
 
