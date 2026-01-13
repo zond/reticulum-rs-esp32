@@ -136,11 +136,13 @@ src/
 
 | Module | Tests | Description |
 |--------|-------|-------------|
-| `ble/fragmentation.rs` | 22 | BLE packet fragmentation/reassembly |
-| `lora/airtime.rs` | 15 | LoRa time-on-air calculations |
+| `ble/fragmentation.rs` | 27 | BLE packet fragmentation/reassembly |
+| `lora/airtime.rs` | 14 | LoRa time-on-air calculations |
 | `lora/duty_cycle.rs` | 8 | Token bucket duty cycle limiter |
-| `wifi/config.rs` | 28 | WiFi credential validation |
-| **Total** | **75** | |
+| `wifi/config.rs` | 26 | WiFi credential validation |
+| `persistence.rs` | 6 | Identity NVS storage (ESP32 only) |
+| `wifi/storage.rs` | 6 | WiFi config NVS storage (ESP32 only) |
+| **Total** | **87** | 75 host + 12 ESP32-only |
 
 ## Testing Environments
 
@@ -224,4 +226,4 @@ Standard `#[test]` works, but ESP-IDF needs initialization before tests run. The
 
 ---
 
-*Updated 2026-01-12: Simplified to `#[esp32_test]` macro with `cargo test-qemu`*
+*Updated 2026-01-13: Added ESP32-only tests for persistence and wifi/storage*
