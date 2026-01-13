@@ -29,3 +29,5 @@ build-esp32 = ["build", "--release", "--target", "xtensa-esp32s3-espidf", "--no-
 build-qemu = ["build", "--release", "--target", "xtensa-esp32-espidf", "--no-default-features", "--features", "esp32", "--config", "env.ESP_IDF_SDKCONFIG_DEFAULTS='config/sdkconfig.defaults;config/sdkconfig.qemu'"]
 # Test alias - runs tests in QEMU
 test-qemu = ["run", "--bin", "qemu-test-runner"]
+# DANGER: Production flash with encryption - permanently burns eFuses!
+production-flash = ["run", "--bin", "production-flash"]

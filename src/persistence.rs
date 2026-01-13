@@ -4,23 +4,10 @@
 //! so it persists across reboots. A stable identity is essential for Reticulum routing
 //! and destination addressing.
 //!
-//! # Security Considerations
+//! # Security
 //!
-//! **Warning**: By default, private keys are stored as plaintext hex strings in NVS
-//! flash memory. Anyone with physical access to the device can extract the keys.
-//!
-//! For production deployments, enable ESP-IDF flash encryption:
-//! 1. Run `cargo espflash menuconfig` or add to `sdkconfig.defaults`:
-//!    - `CONFIG_SECURE_FLASH_ENC_ENABLED=y`
-//!    - `CONFIG_NVS_ENCRYPTION=y`
-//! 2. See [Flash Encryption Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html)
-//!
-//! **No code changes required** - encryption is handled transparently by ESP-IDF.
-//! The same API calls work identically whether encryption is enabled or not.
-//! When flash encryption is enabled, all NVS reads/writes are automatically
-//! encrypted/decrypted by the hardware.
-//!
-//! Compromised private keys allow impersonation of the node on the Reticulum network.
+//! For production devices, use `cargo production-flash` which enables NVS encryption.
+//! Development builds (default) do not encrypt NVS data.
 //!
 //! # Usage
 //!

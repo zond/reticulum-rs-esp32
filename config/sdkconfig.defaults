@@ -21,16 +21,4 @@ CONFIG_BT_BLE_ENABLED=y
 # Increase memory for networking
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
-# ============================================================================
-# PRODUCTION SECURITY: Flash/NVS Encryption
-# ============================================================================
-# WARNING: Enabling flash encryption burns eFuses permanently!
-# Only enable for production devices. Cannot be disabled once enabled.
-# QEMU does not support flash encryption - tests will fail.
-#
-# To enable for production, uncomment these lines:
-# CONFIG_SECURE_FLASH_ENC_ENABLED=y
-# CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y  # Use _RELEASE for production
-# CONFIG_NVS_ENCRYPTION=y
-#
-# See: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html
+# For production builds with NVS encryption, use: cargo production-flash

@@ -1,0 +1,20 @@
+# Production configuration with flash encryption enabled
+#
+# WARNING: This configuration permanently burns eFuses on first boot!
+# Only use for final production devices. Cannot be undone.
+#
+# Use `cargo production-flash` to build and flash with this config.
+
+# Include all defaults
+# (Note: esp-idf-sys will merge this with sdkconfig.defaults)
+
+# ============================================================================
+# FLASH ENCRYPTION - ENABLED FOR PRODUCTION
+# ============================================================================
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+CONFIG_NVS_ENCRYPTION=y
+
+# Secure boot (recommended with flash encryption)
+# CONFIG_SECURE_BOOT=y
+# CONFIG_SECURE_BOOT_V2_ENABLED=y
