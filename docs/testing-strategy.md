@@ -136,15 +136,17 @@ src/
 
 | Module | Tests | Description |
 |--------|-------|-------------|
+| `announce/cache.rs` | 16 | LRU announce cache for deduplication |
 | `ble/fragmentation.rs` | 27 | BLE packet fragmentation/reassembly |
 | `lora/airtime.rs` | 14 | LoRa time-on-air calculations |
 | `lora/duty_cycle.rs` | 8 | Token bucket duty cycle limiter |
 | `lora/config.rs` | 4 | Region configuration |
 | `lora/csma.rs` | 23 | CSMA/CA collision avoidance |
+| `routing/path_table.rs` | 17 | Routing table for destination paths |
 | `wifi/config.rs` | 26 | WiFi credential validation |
 | `persistence.rs` | 6 | Identity NVS storage (ESP32 only) |
 | `wifi/storage.rs` | 6 | WiFi config NVS storage (ESP32 only) |
-| **Total** | **114** | 102 host + 12 ESP32-only |
+| **Total** | **147** | 135 host + 12 ESP32-only |
 
 ## Testing Environments
 

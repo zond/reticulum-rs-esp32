@@ -527,15 +527,15 @@ These components can be fully developed and tested on the host machine without E
 |-----------|--------|-------|-------|
 | Duty Cycle Limiter | ✅ Done | ~130 | 8 |
 | LoRa Airtime Calculator | ✅ Done | ~180 | 14 |
-| BLE Fragmentation | ✅ Done | ~500 | 26 |
+| BLE Fragmentation | ✅ Done | ~500 | 27 |
+| CSMA/CA Logic | ✅ Done | ~300 | 23 |
+| Announce Cache | ✅ Done | ~300 | 16 |
+| Path Table | ✅ Done | ~350 | 17 |
 
 ### Candidates for Host Development
 
 | Component | Testability | Priority | Estimate |
 |-----------|-------------|----------|----------|
-| **CSMA/CA Logic** | 90% - needs mock timer | Medium | ~100 lines, ~10 tests |
-| **Announce Cache** | 100% - pure data structure | Medium | ~150 lines, ~15 tests |
-| **Path Table** | 100% - pure data structure | Medium | ~200 lines, ~15 tests |
 | **Packet Validation** | 100% - pure logic | Low | ~100 lines, ~10 tests |
 
 ### BLE Fragmentation (Implemented)
@@ -550,35 +550,37 @@ See `src/ble/fragmentation.rs` - implements packet splitting and reassembly for 
 - Memory bounds: max pending reassemblies, max fragments per packet
 - Fragment validation (rejects invalid flags)
 
-### CSMA/CA Logic
+### CSMA/CA Logic (Implemented)
 
-Listen-before-talk for LoRa to avoid collisions on shared frequencies.
+See `src/lora/csma.rs` - listen-before-talk for LoRa to avoid collisions.
 
-**Design:**
-- Check RSSI before transmitting
-- Random backoff on channel busy
+**Features:**
+- Check RSSI before transmitting with configurable threshold
+- Exponential random backoff on channel busy
 - Configurable retry count and backoff parameters
-- Can be tested with mock channel state
+- Integrated into LoRa radio transmit path
 
-### Announce Cache
+### Announce Cache (Implemented)
 
-LRU cache for recently seen announces to avoid rebroadcasting duplicates.
+See `src/announce/cache.rs` - LRU cache for announce deduplication.
 
-**Design:**
-- Key: announce hash
-- Value: timestamp + hop count
-- Configurable size limit
+**Features:**
+- Key: announce hash (16 bytes)
+- Value: timestamp + hop count + seen count
+- Configurable size limit with LRU eviction
 - TTL-based expiration
+- Better path detection (lower hop count updates)
 
-### Path Table
+### Path Table (Implemented)
 
-Routing table for discovered paths to destinations.
+See `src/routing/path_table.rs` - routing table for destination paths.
 
-**Design:**
-- Key: destination hash
-- Value: next hop interface + metrics
-- Path scoring based on hop count, RSSI, etc.
-- Expiration and refresh logic
+**Features:**
+- Key: destination hash (16 bytes)
+- Value: interface type + next hop + metrics
+- Path scoring based on hop count, RSSI, validation status
+- Multiple paths per destination (different interfaces)
+- TTL-based expiration
 
 ---
 
