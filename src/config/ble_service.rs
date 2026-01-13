@@ -1,17 +1,26 @@
-//! BLE GATT service for WiFi configuration.
+//! BLE GATT service for node configuration.
 //!
-//! This module provides a BLE service that allows configuring WiFi credentials
+//! This module provides a BLE service that allows configuring the transport node
 //! from a phone app like nRF Connect.
 //!
 //! # GATT Service Structure
 //!
 //! ```text
-//! Service: WiFi Configuration
+//! Service: Node Configuration
 //! ├── Status (Read, Notify) - Current connection status
-//! ├── SSID (Read, Write) - Network name
-//! ├── Password (Write) - Network password
+//! ├── SSID (Read, Write) - WiFi network name
+//! ├── Password (Write) - WiFi network password
 //! └── Command (Write) - Control commands (connect/disconnect/clear)
 //! ```
+//!
+//! # Future Extensions
+//!
+//! This service will be extended to support additional configuration:
+//! - Testnet server selection
+//! - Announce filtering (gateway mode)
+//! - LoRa region selection
+//!
+//! See [docs/future-work.md](../../docs/future-work.md) for details.
 //!
 //! # Security Considerations
 //!
@@ -29,15 +38,17 @@
 //!   - Disabling BLE advertising after successful WiFi connection
 //!   - Implementing a physical button requirement to enable configuration mode
 
-use super::config::{ConfigCommand, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN};
+use super::wifi::{
+    ConfigCommand, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN,
+};
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{uuid128, BLEDevice, BLEServer, NimbleProperties};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
-/// Custom UUID for WiFi Configuration Service.
+/// Custom UUID for Node Configuration Service.
 /// Generated: https://www.uuidgenerator.net/
-const WIFI_CONFIG_SERVICE_UUID: BleUuid = uuid128!("12345678-1234-5678-1234-56789abcdef0");
+const CONFIG_SERVICE_UUID: BleUuid = uuid128!("12345678-1234-5678-1234-56789abcdef0");
 
 /// UUID for Status characteristic.
 const STATUS_CHAR_UUID: BleUuid = uuid128!("12345678-1234-5678-1234-56789abcdef1");
@@ -58,6 +69,9 @@ const DEVICE_NAME_UNCONFIGURED: &str = "Reticulum-Unconfigured";
 const DEVICE_NAME_CONFIGURED: &str = "Reticulum-Node";
 
 /// BLE GATT service for WiFi configuration.
+///
+/// This will be renamed to `ConfigService` when additional configuration
+/// options are added.
 pub struct WifiConfigService {
     /// Current WiFi status.
     status: Arc<Mutex<WifiStatus>>,
@@ -70,7 +84,7 @@ pub struct WifiConfigService {
 }
 
 impl WifiConfigService {
-    /// Create and register the WiFi configuration BLE service.
+    /// Create and register the configuration BLE service.
     pub fn new(server: &mut BLEServer) -> Self {
         let status = Arc::new(Mutex::new(WifiStatus::Unconfigured));
         let pending_ssid = Arc::new(Mutex::new(String::new()));
@@ -78,7 +92,7 @@ impl WifiConfigService {
         let pending_command = Arc::new(Mutex::new(None));
 
         // Create GATT service
-        let service = server.create_service(WIFI_CONFIG_SERVICE_UUID);
+        let service = server.create_service(CONFIG_SERVICE_UUID);
 
         // Status characteristic (Read + Notify)
         let status_clone = status.clone();
@@ -177,7 +191,7 @@ impl WifiConfigService {
             .set_data(
                 esp32_nimble::BLEAdvertisementData::new()
                     .name(name)
-                    .add_service_uuid(WIFI_CONFIG_SERVICE_UUID),
+                    .add_service_uuid(CONFIG_SERVICE_UUID),
             )
             .unwrap();
 

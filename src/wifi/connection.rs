@@ -3,7 +3,7 @@
 //! This module wraps ESP-IDF WiFi driver functionality for connecting
 //! to access points.
 
-use super::config::WifiConfig;
+use crate::config::WifiConfig;
 use esp_idf_hal::modem::Modem;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};

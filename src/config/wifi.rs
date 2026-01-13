@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```
-//! use reticulum_rs_esp32::wifi::{WifiConfig, ConfigCommand};
+//! use reticulum_rs_esp32::config::{WifiConfig, ConfigCommand};
 //!
 //! let config = WifiConfig::new("MyNetwork", "MyPassword").unwrap();
 //! assert!(config.validate().is_ok());

@@ -5,18 +5,21 @@
 
 pub mod announce;
 pub mod ble;
+pub mod config;
 pub mod lora;
 #[cfg(feature = "esp32")]
 pub mod persistence;
 pub mod routing;
+pub mod testnet;
 pub mod wifi;
 
 // Re-export commonly used items
 pub use announce::{AnnounceCache, AnnounceCacheConfig, AnnounceEntry};
 pub use ble::{Fragment, FragmentError, Fragmenter, Reassembler};
+pub use config::{ConfigCommand, ConfigError, WifiConfig, WifiStatus};
 pub use lora::{calculate_airtime_ms, calculate_airtime_us, DutyCycleLimiter, LoRaParams};
 pub use routing::{InterfaceType, PathEntry, PathTable, PathTableConfig, RoutingMetrics};
-pub use wifi::{ConfigCommand, ConfigError, WifiConfig, WifiStatus};
+pub use testnet::{TestnetServer, TestnetTransport, TransportError, DEFAULT_SERVER, SERVERS};
 
 /// Initialize ESP-IDF for tests. Uses Once to ensure it only runs once.
 /// This is a no-op on non-ESP32 targets.

@@ -61,3 +61,4 @@ For build commands, tool locations, and setup instructions, see [README.md](READ
 | [docs/implementation-guide.md](docs/implementation-guide.md) | Feature implementation plans |
 | [docs/testing-strategy.md](docs/testing-strategy.md) | Testing system, `#[esp32_test]` usage |
 | [docs/scalable-routing-proposal.md](docs/scalable-routing-proposal.md) | DHT-based routing for global scale |
+| [docs/future-work.md](docs/future-work.md) | Planned improvements and TODOs |

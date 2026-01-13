@@ -5,7 +5,7 @@
 
 #![allow(dead_code)] // Functions will be used when main.rs is integrated
 
-use super::config::{WifiConfig, MAX_PASSWORD_LEN, MAX_SSID_LEN};
+use crate::config::{WifiConfig, MAX_PASSWORD_LEN, MAX_SSID_LEN};
 use esp_idf_svc::nvs::{EspNvs, NvsDefault};
 use esp_idf_sys::EspError;
 

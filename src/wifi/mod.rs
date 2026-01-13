@@ -1,33 +1,24 @@
-//! WiFi configuration and connection management.
+//! WiFi driver and storage.
 //!
-//! This module provides BLE-based WiFi configuration for the headless ESP32 device.
+//! This module provides ESP-IDF WiFi driver wrapper and NVS storage
+//! for WiFi credentials.
 //!
 //! # Components
 //!
-//! - [`config`] - Platform-independent configuration types (host-testable)
+//! - [`connection`] - ESP-IDF WiFi driver wrapper (ESP32 only)
 //! - [`storage`] - NVS persistence for credentials (ESP32 only)
-//! - [`ble_service`] - BLE GATT service for configuration (ESP32 only)
-//! - [`connection`] - WiFi driver wrapper (ESP32 only)
+//!
+//! # Configuration Types
+//!
+//! WiFi configuration types (SSID, password validation, etc.) have moved to
+//! the [`crate::config`] module.
 
-mod config;
-
-#[cfg(feature = "esp32")]
-mod ble_service;
 #[cfg(feature = "esp32")]
 mod connection;
 #[cfg(feature = "esp32")]
 mod storage;
 
-// Re-export platform-independent types
-pub use config::{
-    ConfigCommand, ConfigError, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN,
-    MIN_PASSWORD_LEN,
-};
-
-// Re-export ESP32-specific types
 #[cfg(feature = "esp32")]
-pub use ble_service::WifiConfigService;
-#[cfg(feature = "esp32")]
-pub use connection::WifiManager;
+pub use connection::{WifiError, WifiManager};
 #[cfg(feature = "esp32")]
 pub use storage::{clear_wifi_config, load_wifi_config, save_wifi_config};
