@@ -19,7 +19,7 @@ README.md and CLAUDE.md should refer to docs/* files when useful.
 
 ### Before Every Commit
 
-1. Run tests and linting (see README.md for commands)
+1. Run tests (both host and qemu, and if available device) and linting (see README.md for commands)
 2. Format code: `cargo fmt`
 3. Ensure README.md and CLAUDE.md are up to date
 4. Check if any files in the docs directory need update

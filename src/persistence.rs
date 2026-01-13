@@ -44,23 +44,82 @@ const IDENTITY_HEX_LEN: usize = 128;
 /// Load identity from NVS.
 ///
 /// Returns `None` if no identity is stored or if the stored data is corrupted.
+/// Errors are logged for debugging purposes.
 pub fn load_identity(nvs: &EspNvs<NvsDefault>) -> Option<PrivateIdentity> {
     let mut buf = [0u8; IDENTITY_HEX_LEN + 1];
-    let bytes = nvs.get_raw(IDENTITY_KEY, &mut buf).ok()??;
-    let hex_str = core::str::from_utf8(bytes).ok()?;
-    PrivateIdentity::new_from_hex_string(hex_str).ok()
+
+    let bytes = match nvs.get_raw(IDENTITY_KEY, &mut buf) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => {
+            log::debug!("No identity found in NVS");
+            return None;
+        }
+        Err(e) => {
+            log::warn!("Failed to read identity from NVS: {:?}", e);
+            return None;
+        }
+    };
+
+    let hex_str = match core::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Stored identity is not valid UTF-8: {:?}", e);
+            return None;
+        }
+    };
+
+    match PrivateIdentity::new_from_hex_string(hex_str) {
+        Ok(identity) => Some(identity),
+        Err(e) => {
+            log::error!("Failed to parse stored identity: {:?}", e);
+            None
+        }
+    }
 }
 
-/// Save identity to NVS.
+/// Save identity to NVS with read-back verification.
 ///
-/// Serializes the identity as a hex string for storage.
+/// Serializes the identity as a hex string for storage, then reads it back
+/// to verify the write succeeded. This catches flash write failures that
+/// may not return an error code.
 pub fn save_identity(
     nvs: &mut EspNvs<NvsDefault>,
     identity: &PrivateIdentity,
 ) -> Result<(), EspError> {
     let hex_string = identity.to_hex_string();
+
+    // Verify our buffer size constant is correct
+    debug_assert_eq!(
+        hex_string.len(),
+        IDENTITY_HEX_LEN,
+        "IDENTITY_HEX_LEN ({}) doesn't match actual hex string length ({})",
+        IDENTITY_HEX_LEN,
+        hex_string.len()
+    );
+
     nvs.set_raw(IDENTITY_KEY, hex_string.as_bytes())?;
-    info!("Identity saved to NVS");
+
+    // Read back and verify to catch silent flash write failures
+    let mut verify_buf = [0u8; IDENTITY_HEX_LEN + 1];
+    let read_bytes = nvs
+        .get_raw(IDENTITY_KEY, &mut verify_buf)
+        .map_err(|e| {
+            log::error!("Failed to read back identity after save: {:?}", e);
+            e
+        })?
+        .ok_or_else(|| {
+            log::error!("Identity not found after save - possible flash failure");
+            EspError::from_infallible::<{ esp_idf_sys::ESP_ERR_NVS_NOT_FOUND }>()
+        })?;
+
+    if read_bytes != hex_string.as_bytes() {
+        log::error!("Identity verification failed - data mismatch after save");
+        return Err(EspError::from_infallible::<
+            { esp_idf_sys::ESP_ERR_INVALID_CRC },
+        >());
+    }
+
+    info!("Identity saved and verified in NVS");
     Ok(())
 }
 
@@ -78,13 +137,20 @@ pub fn clear_identity(nvs: &mut EspNvs<NvsDefault>) -> Result<(), EspError> {
 /// This is the main entry point for identity management. On first boot,
 /// creates a new random identity and saves it. On subsequent boots,
 /// loads the existing identity.
+///
+/// # Entropy Source
+///
+/// New identities are generated using `OsRng`, which on ESP32 uses the
+/// hardware random number generator (RNG). The ESP32 RNG derives entropy
+/// from hardware thermal noise and is initialized by ESP-IDF during boot.
+/// See: <https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/random.html>
 pub fn load_or_create_identity(nvs: &mut EspNvs<NvsDefault>) -> Result<PrivateIdentity, EspError> {
     if let Some(identity) = load_identity(nvs) {
         info!("Loaded existing identity");
         return Ok(identity);
     }
 
-    info!("Creating new identity");
+    info!("Creating new identity using hardware RNG");
     let identity = PrivateIdentity::new_from_rand(OsRng);
     save_identity(nvs, &identity)?;
     Ok(identity)

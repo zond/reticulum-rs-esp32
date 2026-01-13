@@ -59,15 +59,11 @@ impl<'a> WifiManager<'a> {
         // Start WiFi
         self.wifi.start()?;
 
-        // Connect with timeout
-        self.wifi
-            .connect()
-            .map_err(|e| WifiError::ConnectionFailed(format!("{:?}", e)))?;
+        // Connect (relies on ESP-IDF's internal timeout mechanisms)
+        self.wifi.connect().map_err(WifiError::ConnectionFailed)?;
 
         // Wait for DHCP
-        self.wifi
-            .wait_netif_up()
-            .map_err(|e| WifiError::DhcpFailed(format!("{:?}", e)))?;
+        self.wifi.wait_netif_up().map_err(WifiError::DhcpFailed)?;
 
         // Get IP address
         let ip_info = self.wifi.wifi().sta_netif().get_ip_info()?;
@@ -112,9 +108,9 @@ pub enum WifiError {
     /// Password is invalid.
     InvalidPassword,
     /// Failed to connect to the network.
-    ConnectionFailed(String),
+    ConnectionFailed(EspError),
     /// Failed to obtain IP address via DHCP.
-    DhcpFailed(String),
+    DhcpFailed(EspError),
     /// ESP-IDF error.
     EspError(EspError),
 }
@@ -130,8 +126,8 @@ impl std::fmt::Display for WifiError {
         match self {
             Self::InvalidSsid => write!(f, "invalid SSID"),
             Self::InvalidPassword => write!(f, "invalid password"),
-            Self::ConnectionFailed(reason) => write!(f, "connection failed: {}", reason),
-            Self::DhcpFailed(reason) => write!(f, "DHCP failed: {}", reason),
+            Self::ConnectionFailed(e) => write!(f, "connection failed: {:?}", e),
+            Self::DhcpFailed(e) => write!(f, "DHCP failed: {:?}", e),
             Self::EspError(e) => write!(f, "ESP error: {:?}", e),
         }
     }

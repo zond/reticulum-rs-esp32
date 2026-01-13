@@ -28,9 +28,6 @@ pub const MAX_PASSWORD_LEN: usize = 64;
 /// Minimum password length for WPA2.
 pub const MIN_PASSWORD_LEN: usize = 8;
 
-/// Connection timeout in seconds.
-pub const CONNECTION_TIMEOUT_SECS: u64 = 30;
-
 /// WiFi credentials for connecting to an access point.
 ///
 /// The password is automatically zeroed from memory when this struct is dropped.

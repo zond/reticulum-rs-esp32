@@ -20,8 +20,8 @@ mod storage;
 
 // Re-export platform-independent types
 pub use config::{
-    ConfigCommand, ConfigError, WifiConfig, WifiStatus, CONNECTION_TIMEOUT_SECS, MAX_PASSWORD_LEN,
-    MAX_SSID_LEN, MIN_PASSWORD_LEN,
+    ConfigCommand, ConfigError, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN,
+    MIN_PASSWORD_LEN,
 };
 
 // Re-export ESP32-specific types
