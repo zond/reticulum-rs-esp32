@@ -174,9 +174,14 @@ Tests ESP32 code without real hardware. Uses plain ESP32 (not S3) due to QEMU st
 
 ## Best Practices
 
-### 1. Maximize Host-Testable Code
+### 1. Testing Priority: Host First, Then QEMU
 
-Separate logic from hardware:
+**Priority order:**
+1. **Host tests** (`cargo test`) - Fastest iteration, pure logic
+2. **QEMU tests** (`cargo test-qemu`) - ESP32-specific code that can't run on host
+3. **Device tests** - Only for hardware that QEMU can't emulate (radio, peripherals)
+
+Separate logic from hardware to maximize host-testable code:
 
 ```rust
 // Good: Pure logic, host-testable
@@ -186,13 +191,15 @@ pub fn validate_ssid(ssid: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
-// Hardware wrapper, tested on device only
+// ESP32-specific wrapper, tested in QEMU
 #[cfg(feature = "esp32")]
 pub fn save_to_nvs(nvs: &mut EspNvs, ssid: &str) -> Result<(), EspError> {
     validate_ssid(ssid)?;
-    nvs.set_str("ssid", ssid)
+    nvs.set_raw("ssid", ssid.as_bytes())
 }
 ```
+
+For ESP32-specific code that can't run on host (NVS, ESP-IDF APIs), write tests that run in QEMU. See `persistence::tests` and `wifi::storage::tests` for examples.
 
 ### 2. Use Feature Flags Consistently
 
@@ -226,4 +233,4 @@ Standard `#[test]` works, but ESP-IDF needs initialization before tests run. The
 
 ---
 
-*Updated 2026-01-13: Added ESP32-only tests for persistence and wifi/storage*
+*Updated 2026-01-13: Clarified testing priority (host first, then QEMU)*
