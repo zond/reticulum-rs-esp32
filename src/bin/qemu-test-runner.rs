@@ -30,7 +30,7 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Building tests for ESP32 (QEMU) ===");
 
-    // Build tests
+    // Build tests with QEMU-specific config (disables USB console not supported by QEMU)
     let status = Command::new("cargo")
         .args([
             "test",
@@ -40,6 +40,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--features",
             "esp32",
             "--release",
+            "--config",
+            "env.ESP_IDF_SDKCONFIG_DEFAULTS='config/sdkconfig.defaults;config/sdkconfig.qemu'",
         ])
         .status()?;
 

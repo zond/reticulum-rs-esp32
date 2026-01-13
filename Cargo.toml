@@ -26,6 +26,16 @@ name = "production-flash"
 path = "src/bin/production-flash.rs"
 test = false
 
+[[bin]]
+name = "flash-esp32"
+path = "src/bin/flash-esp32.rs"
+test = false
+
+[[bin]]
+name = "flash-qemu"
+path = "src/bin/flash-qemu.rs"
+test = false
+
 [features]
 default = []
 esp32 = [
