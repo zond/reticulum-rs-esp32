@@ -113,6 +113,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let timeout = Duration::from_secs(QEMU_TIMEOUT_SECS);
     let mut test_result: Option<bool> = None;
     let mut in_test_output = false;
+    let mut crash_reason: Option<String> = None;
 
     // Note: timeout is checked between output lines, so a completely hung
     // process that produces no output may exceed QEMU_TIMEOUT_SECS slightly
@@ -146,12 +147,46 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
 
-        // Check for crash/reboot (indicates test failure)
-        if line.contains("Guru Meditation Error") || line.contains("abort() was called") {
-            eprintln!("\nTest crashed!");
+        // Check for various crash/error patterns
+        if line.contains("Guru Meditation Error") {
+            crash_reason = Some("Guru Meditation Error (CPU exception)".to_string());
             test_result = Some(false);
             break;
         }
+        if line.contains("abort() was called") {
+            crash_reason = Some("abort() was called".to_string());
+            test_result = Some(false);
+            break;
+        }
+        if line.contains("stack overflow") {
+            crash_reason = Some("Stack overflow detected".to_string());
+            test_result = Some(false);
+            break;
+        }
+        if line.contains("CORRUPTED") {
+            crash_reason = Some("Stack corruption detected".to_string());
+            test_result = Some(false);
+            break;
+        }
+        if line.contains("panic") && line.contains("occurred") {
+            crash_reason = Some("Panic occurred".to_string());
+            test_result = Some(false);
+            break;
+        }
+        // Detect watchdog reset (indicates hang/infinite loop)
+        if line.contains("WDT_SYS_RESET")
+            || line.contains("TG0WDT_SYS_RESET")
+            || line.contains("TG1WDT_SYS_RESET")
+        {
+            crash_reason = Some("Watchdog timer reset (possible hang)".to_string());
+            test_result = Some(false);
+            break;
+        }
+    }
+
+    // Report crash reason if any
+    if let Some(reason) = crash_reason {
+        eprintln!("\n*** TEST CRASHED: {} ***", reason);
     }
 
     // Guard will kill QEMU on drop

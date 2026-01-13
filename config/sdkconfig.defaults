@@ -1,6 +1,10 @@
 # Rust often needs a bit of extra main task stack size compared to C
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8000
 
+# Increase pthread stack size for crypto operations (identity generation)
+# Default is 3072, but reticulum identity crypto needs more
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192
+
 # Use this to set FreeRTOS kernel tick frequency to 1000 Hz (100 Hz by default).
 # This allows to have higher resolution for thread sleep times.
 CONFIG_FREERTOS_HZ=1000
@@ -16,3 +20,17 @@ CONFIG_BT_BLE_ENABLED=y
 
 # Increase memory for networking
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# ============================================================================
+# PRODUCTION SECURITY: Flash/NVS Encryption
+# ============================================================================
+# WARNING: Enabling flash encryption burns eFuses permanently!
+# Only enable for production devices. Cannot be disabled once enabled.
+# QEMU does not support flash encryption - tests will fail.
+#
+# To enable for production, uncomment these lines:
+# CONFIG_SECURE_FLASH_ENC_ENABLED=y
+# CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=y  # Use _RELEASE for production
+# CONFIG_NVS_ENCRYPTION=y
+#
+# See: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html

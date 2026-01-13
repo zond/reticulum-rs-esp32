@@ -49,3 +49,95 @@ pub fn init_nvs() -> Result<EspNvs<NvsDefault>, EspError> {
     let partition = crate::get_nvs_default_partition()?;
     EspNvs::new(partition, NVS_NAMESPACE, true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reticulum_rs_esp32_macros::esp32_test;
+
+    #[esp32_test]
+    fn test_init_nvs() {
+        crate::ensure_esp_initialized();
+        let nvs = init_nvs();
+        assert!(nvs.is_ok(), "Failed to initialize NVS: {:?}", nvs.err());
+    }
+
+    #[esp32_test]
+    fn test_save_load_roundtrip() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        let config =
+            WifiConfig::new("TestNetwork", "password123").expect("Failed to create config");
+        save_wifi_config(&mut nvs, &config).expect("Failed to save config");
+
+        let loaded = load_wifi_config(&nvs);
+        assert!(loaded.is_some(), "Failed to load config");
+        assert_eq!(loaded.unwrap(), config);
+    }
+
+    #[esp32_test]
+    fn test_save_load_open_network() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        let config = WifiConfig::open("OpenNetwork").expect("Failed to create config");
+        save_wifi_config(&mut nvs, &config).expect("Failed to save config");
+
+        let loaded = load_wifi_config(&nvs).expect("Failed to load config");
+        assert_eq!(loaded, config);
+        assert!(loaded.is_open());
+    }
+
+    #[esp32_test]
+    fn test_clear_config() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        // Save a config first
+        let config =
+            WifiConfig::new("TestNetwork", "password123").expect("Failed to create config");
+        save_wifi_config(&mut nvs, &config).expect("Failed to save config");
+
+        // Verify it's saved
+        assert!(load_wifi_config(&nvs).is_some());
+
+        // Clear it
+        clear_wifi_config(&mut nvs).expect("Failed to clear config");
+
+        // Verify it's gone
+        assert!(load_wifi_config(&nvs).is_none());
+    }
+
+    #[esp32_test]
+    fn test_load_nonexistent() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        // Clear any existing config first
+        let _ = clear_wifi_config(&mut nvs);
+
+        // Loading should return None
+        let loaded = load_wifi_config(&nvs);
+        assert!(loaded.is_none());
+    }
+
+    #[esp32_test]
+    fn test_overwrite_config() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        // Save first config
+        let config1 = WifiConfig::new("Network1", "password1").expect("Failed to create config1");
+        save_wifi_config(&mut nvs, &config1).expect("Failed to save config1");
+
+        // Save second config (overwrite)
+        let config2 = WifiConfig::new("Network2", "password2").expect("Failed to create config2");
+        save_wifi_config(&mut nvs, &config2).expect("Failed to save config2");
+
+        // Should load the second config
+        let loaded = load_wifi_config(&nvs).expect("Failed to load config");
+        assert_eq!(loaded, config2);
+        assert_ne!(loaded, config1);
+    }
+}

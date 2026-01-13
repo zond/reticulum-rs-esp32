@@ -9,9 +9,16 @@
 //! **Warning**: By default, private keys are stored as plaintext hex strings in NVS
 //! flash memory. Anyone with physical access to the device can extract the keys.
 //!
-//! For production deployments, you should enable ESP-IDF flash encryption:
-//! - [Flash Encryption Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html)
-//! - [NVS Encryption Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/storage/nvs_encryption.html)
+//! For production deployments, enable ESP-IDF flash encryption:
+//! 1. Run `cargo espflash menuconfig` or add to `sdkconfig.defaults`:
+//!    - `CONFIG_SECURE_FLASH_ENC_ENABLED=y`
+//!    - `CONFIG_NVS_ENCRYPTION=y`
+//! 2. See [Flash Encryption Guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/flash-encryption.html)
+//!
+//! **No code changes required** - encryption is handled transparently by ESP-IDF.
+//! The same API calls work identically whether encryption is enabled or not.
+//! When flash encryption is enabled, all NVS reads/writes are automatically
+//! encrypted/decrypted by the hardware.
 //!
 //! Compromised private keys allow impersonation of the node on the Reticulum network.
 //!
@@ -165,4 +172,90 @@ pub fn load_or_create_identity(nvs: &mut EspNvs<NvsDefault>) -> Result<PrivateId
 pub fn init_nvs() -> Result<EspNvs<NvsDefault>, EspError> {
     let partition = crate::get_nvs_default_partition()?;
     EspNvs::new(partition, NVS_NAMESPACE, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reticulum_rs_esp32_macros::esp32_test;
+
+    #[esp32_test]
+    fn test_init_nvs() {
+        crate::ensure_esp_initialized();
+        let nvs = init_nvs();
+        assert!(nvs.is_ok(), "Failed to initialize NVS: {:?}", nvs.err());
+    }
+
+    #[esp32_test]
+    fn test_save_load_identity_roundtrip() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        // Use Box to reduce stack usage - PrivateIdentity crypto ops need stack space
+        let identity = Box::new(PrivateIdentity::new_from_rand(OsRng));
+        let original_hex = identity.to_hex_string();
+
+        save_identity(&mut nvs, &identity).expect("Failed to save identity");
+        drop(identity); // Free stack space before loading
+
+        let loaded = load_identity(&nvs);
+        assert!(loaded.is_some(), "Failed to load identity");
+        assert_eq!(original_hex, loaded.unwrap().to_hex_string());
+    }
+
+    #[esp32_test]
+    fn test_clear_identity() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        // Create, save, then drop to minimize stack usage
+        {
+            let identity = PrivateIdentity::new_from_rand(OsRng);
+            save_identity(&mut nvs, &identity).expect("Failed to save identity");
+        }
+
+        assert!(load_identity(&nvs).is_some());
+        clear_identity(&mut nvs).expect("Failed to clear identity");
+        assert!(load_identity(&nvs).is_none());
+    }
+
+    #[esp32_test]
+    fn test_load_nonexistent_identity() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        let _ = clear_identity(&mut nvs);
+        assert!(load_identity(&nvs).is_none());
+    }
+
+    #[esp32_test]
+    fn test_load_or_create_identity() {
+        crate::ensure_esp_initialized();
+        let mut nvs = init_nvs().expect("Failed to init NVS");
+
+        // Clear and create new
+        let _ = clear_identity(&mut nvs);
+        let hex1 = load_or_create_identity(&mut nvs)
+            .expect("Failed to create")
+            .to_hex_string();
+
+        // Should load existing (same identity)
+        let hex2 = load_or_create_identity(&mut nvs)
+            .expect("Failed to load")
+            .to_hex_string();
+
+        assert_eq!(hex1, hex2, "Should load same identity");
+    }
+
+    #[esp32_test]
+    fn test_identity_hex_length_constant() {
+        crate::ensure_esp_initialized();
+
+        let identity = PrivateIdentity::new_from_rand(OsRng);
+        assert_eq!(
+            identity.to_hex_string().len(),
+            IDENTITY_HEX_LEN,
+            "IDENTITY_HEX_LEN constant is incorrect"
+        );
+    }
 }
