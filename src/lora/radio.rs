@@ -19,6 +19,7 @@ use super::config::{
     Region, BANDWIDTH_HZ, LORA_MTU, LOW_DATA_RATE_OPTIMIZE, PREAMBLE_LENGTH, SPREADING_FACTOR,
     TX_POWER,
 };
+use super::csma::{Csma, CsmaConfig, CsmaResult};
 use super::{calculate_airtime_us, DutyCycleLimiter, LoRaParams};
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::gpio::{Gpio1, Gpio10, Gpio4, Gpio5, Input, Output, PinDriver};
@@ -43,6 +44,10 @@ const BUSY_TIMEOUT_MS: u32 = 1000;
 
 /// Maximum time to wait for TX completion (seconds).
 const TX_TIMEOUT_SECS: u64 = 5;
+
+/// RSSI settling time after entering RX mode (ms).
+/// Per SX1262 community reports, 5ms is reliable for accurate RSSI readings.
+const RSSI_SETTLING_MS: u32 = 5;
 
 // SX1262 LoRa modulation parameter values (per datasheet Table 13-47, 13-48).
 // We use raw bytes because the sx1262 crate's LoRaBandwidth enum has incorrect values.
@@ -91,6 +96,39 @@ impl Command for RawSetModulationParams {
     }
 }
 
+/// Raw GetRssiInst response (instantaneous RSSI reading).
+#[derive(Debug, Clone, Default)]
+struct RssiInstResponse {
+    rssi: u8,
+}
+
+impl regiface::FromByteArray for RssiInstResponse {
+    type Error = core::convert::Infallible;
+    type Array = [u8; 2]; // status byte + RSSI byte
+
+    fn from_bytes(bytes: Self::Array) -> Result<Self, Self::Error> {
+        Ok(Self { rssi: bytes[1] })
+    }
+}
+
+/// Raw GetRssiInst command (opcode 0x15).
+#[derive(Debug, Clone, Default)]
+struct GetRssiInst;
+
+impl Command for GetRssiInst {
+    type IdType = u8;
+    type CommandParameters = NoParameters;
+    type ResponseParameters = RssiInstResponse;
+
+    fn id() -> Self::IdType {
+        0x15
+    }
+
+    fn invoking_parameters(self) -> Self::CommandParameters {
+        Default::default()
+    }
+}
+
 /// LoRa radio interface.
 pub struct LoRaRadio<'d> {
     device: Device<SpiDeviceDriver<'d, SpiDriver<'d>>>,
@@ -102,6 +140,7 @@ pub struct LoRaRadio<'d> {
     dio1: PinDriver<'d, Gpio1, Input>,
     region: Region,
     duty_cycle: DutyCycleLimiter,
+    csma: Csma,
     initialized: bool,
 }
 
@@ -138,6 +177,7 @@ impl<'d> LoRaRadio<'d> {
         let dio1_pin = PinDriver::input(dio1).map_err(RadioError::Gpio)?;
 
         let duty_cycle = region.duty_cycle_limiter();
+        let csma = Csma::new(CsmaConfig::default());
 
         Ok(Self {
             device,
@@ -146,6 +186,7 @@ impl<'d> LoRaRadio<'d> {
             dio1: dio1_pin,
             region,
             duty_cycle,
+            csma,
             initialized: false,
         })
     }
@@ -235,6 +276,10 @@ impl<'d> LoRaRadio<'d> {
         // Configure DIO1 for TX done and RX done interrupts
         self.configure_irq()?;
 
+        // Seed CSMA RNG from hardware random number generator
+        let seed = unsafe { esp_idf_sys::esp_random() };
+        self.csma.seed(seed);
+
         self.initialized = true;
         info!(
             "SX1262 initialized: {} MHz, SF{}, {}kHz, {} dBm",
@@ -289,9 +334,23 @@ impl<'d> LoRaRadio<'d> {
         Ok(())
     }
 
+    /// Read instantaneous RSSI from the radio.
+    ///
+    /// Returns RSSI in dBm. Used for CSMA/CA channel sensing.
+    fn get_rssi(&mut self) -> Result<i16, RadioError> {
+        self.wait_busy()?;
+        let response = self
+            .device
+            .execute_command(GetRssiInst)
+            .map_err(RadioError::Command)?;
+        // RSSI = -raw_value/2 dBm (per SX1262 datasheet)
+        Ok(-(response.rssi as i16) / 2)
+    }
+
     /// Transmit a packet.
     ///
-    /// Returns an error if the duty cycle limit is exceeded.
+    /// Uses CSMA/CA to avoid collisions on the shared frequency.
+    /// Returns an error if the channel is busy after max retries or duty cycle is exceeded.
     pub fn transmit(&mut self, data: &[u8]) -> Result<(), RadioError> {
         if !self.initialized {
             return Err(RadioError::NotInitialized);
@@ -308,9 +367,77 @@ impl<'d> LoRaRadio<'d> {
             });
         }
 
-        // Calculate airtime and check duty cycle (LoRaParams::default() matches our config)
+        // Calculate airtime for duty cycle check (done after CSMA succeeds)
         let airtime_us = calculate_airtime_us(data.len(), &LoRaParams::default());
 
+        // CSMA/CA: check channel before transmitting
+        // Enter RX mode for channel sensing (stays in RX during backoff to detect activity)
+        self.device
+            .execute_command(SetRx {
+                mode: RxMode::Continuous,
+            })
+            .map_err(|e| {
+                self.csma.reset();
+                RadioError::Command(e)
+            })?;
+
+        loop {
+            FreeRtos::delay_ms(RSSI_SETTLING_MS);
+
+            let rssi = match self.get_rssi() {
+                Ok(r) => r,
+                Err(e) => {
+                    self.csma.reset();
+                    let _ = self.device.execute_command(SetStandby {
+                        config: StandbyConfig::Rc,
+                    });
+                    return Err(e);
+                }
+            };
+
+            match self.csma.try_access(rssi) {
+                CsmaResult::Transmit => {
+                    debug!(
+                        "Channel clear (RSSI {} dBm), transmitting {} bytes",
+                        rssi,
+                        data.len()
+                    );
+                    break;
+                }
+                CsmaResult::Wait { ms } => {
+                    debug!(
+                        "Channel busy (RSSI {} dBm), waiting {}ms (retry {})",
+                        rssi,
+                        ms,
+                        self.csma.retries()
+                    );
+                    // Stay in RX mode during backoff to detect channel activity
+                    FreeRtos::delay_ms(ms);
+                }
+                CsmaResult::GiveUp => {
+                    warn!(
+                        "Channel busy after {} retries, dropping packet",
+                        self.csma.retries()
+                    );
+                    self.csma.reset();
+                    let _ = self.device.execute_command(SetStandby {
+                        config: StandbyConfig::Rc,
+                    });
+                    return Err(RadioError::ChannelBusy);
+                }
+            }
+        }
+
+        // CSMA succeeded - now return to standby and check duty cycle
+        self.csma.reset();
+        self.device
+            .execute_command(SetStandby {
+                config: StandbyConfig::Rc,
+            })
+            .map_err(RadioError::Command)?;
+        self.wait_busy()?;
+
+        // Check duty cycle after CSMA succeeds (avoids consuming budget on failed CSMA)
         if !self.duty_cycle.try_consume(airtime_us) {
             warn!(
                 "Duty cycle exceeded: {:.1}% remaining",
@@ -318,12 +445,6 @@ impl<'d> LoRaRadio<'d> {
             );
             return Err(RadioError::DutyCycleExceeded);
         }
-
-        debug!(
-            "Transmitting {} bytes, airtime {} us",
-            data.len(),
-            airtime_us
-        );
 
         // Set packet length for this transmission
         let packet_params =
@@ -568,6 +689,8 @@ pub enum RadioError {
     Timeout,
     /// Duty cycle limit exceeded.
     DutyCycleExceeded,
+    /// Channel busy after CSMA/CA retries.
+    ChannelBusy,
     /// Packet too large.
     PacketTooLarge { size: usize, max: usize },
     /// Empty packet.
@@ -583,6 +706,7 @@ impl fmt::Display for RadioError {
             Self::NotInitialized => write!(f, "radio not initialized"),
             Self::Timeout => write!(f, "radio timeout"),
             Self::DutyCycleExceeded => write!(f, "duty cycle exceeded"),
+            Self::ChannelBusy => write!(f, "channel busy"),
             Self::PacketTooLarge { size, max } => {
                 write!(f, "packet too large: {} bytes (max {})", size, max)
             }
