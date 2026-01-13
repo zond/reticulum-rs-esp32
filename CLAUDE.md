@@ -59,4 +59,4 @@ For build commands, tool locations, and setup instructions, see [README.md](READ
 | [docs/qemu-setup.md](docs/qemu-setup.md) | QEMU installation and usage |
 | [docs/research-findings.md](docs/research-findings.md) | Build configuration rationale |
 | [docs/implementation-guide.md](docs/implementation-guide.md) | Feature implementation plans |
-| [docs/testing-strategy.md](docs/testing-strategy.md) | TAP testing system, `#[tap_test]` usage |
+| [docs/testing-strategy.md](docs/testing-strategy.md) | Testing system, `#[esp32_test]` usage |
