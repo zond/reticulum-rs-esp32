@@ -715,37 +715,50 @@ pub fn start_stats_server(
 
 ---
 
-## Summary: Implementation Order
+## Implementation Status
 
-### Phase 1: Get Device Working (Blockers)
+### Completed ✅
 
-1. **LoRa Interface** - Can send/receive packets over radio
-2. **Identity Persistence** - Stable identity across reboots
-3. **WiFi/TCP** - Connect to testnet (should mostly work already)
+| Component | Lines | Notes |
+|-----------|-------|-------|
+| LoRa Radio Driver | 718 | SX1262 via `sx1262` crate, TX/RX, CSMA/CA integrated |
+| LoRa Duty Cycle | 239 | Token bucket algorithm, microsecond precision |
+| LoRa Airtime Calculator | 400 | Full time-on-air formula |
+| LoRa CSMA/CA | 585 | Exponential backoff, channel sensing |
+| BLE Fragmentation | 1009 | Multi-source reassembly with timeouts |
+| BLE WiFi Config Service | 241 | GATT service for WiFi credentials |
+| Identity Persistence | 248 | NVS on ESP32, file on host |
+| Announce Cache | 536 | LRU with TTL |
+| Path Table | 746 | Multi-path routing with scoring |
+| Stats HTTP Endpoint | 348 | JSON stats on port 8080 |
+| Testnet TCP Connection | - | Via reticulum-rs TcpClient |
 
-### Phase 2: Full Functionality
+### Remaining Work
 
-4. **BLE Interface** - Mesh with BLE devices
-5. **Airtime Limiting** - Legal compliance for LoRa
-6. **Stats HTTP Endpoint** - Monitoring and debugging
+| Task | Priority | Notes |
+|------|----------|-------|
+| **Integrate LoRa with Transport** | BLOCKER | Radio driver exists, needs `InterfaceManager.spawn()` |
+| **BLE Mesh Interface** | BLOCKER | Fragmentation done, need GATT packet interface |
+| **Hardware Testing** | HIGH | Flash to ESP32 and verify |
+| **Periodic Re-announcement** | Medium | Currently announces once at startup |
 
-### Dependencies
+### Architecture
 
 ```
-LoRa Interface ─────┐
-                    ├──► Airtime Limiting
-Identity Persistence┘
-
-BLE Interface (independent)
+┌─────────────────────────────────────────────────────────┐
+│                    node binary                          │
+├─────────────────────────────────────────────────────────┤
+│  reticulum-rs Transport                                 │
+│  ├── TcpClient (testnet) ✅ integrated                  │
+│  ├── LoRaInterface ⚠️ driver done, not integrated       │
+│  └── BleInterface ⚠️ fragmentation done, not integrated │
+├─────────────────────────────────────────────────────────┤
+│  Supporting Components (all ✅)                         │
+│  ├── Identity Persistence (NVS/file)                   │
+│  ├── Stats HTTP Server                                  │
+│  ├── Duty Cycle Limiter                                 │
+│  ├── CSMA/CA                                            │
+│  ├── Announce Cache                                     │
+│  └── Path Table                                         │
+└─────────────────────────────────────────────────────────┘
 ```
-
-### Total Estimate
-
-| Component | Lines |
-|-----------|-------|
-| LoRa Interface (SX1262) | ~800 |
-| BLE Interface | ~1200 |
-| Identity Persistence | ~50 |
-| Airtime Limiting | ~100 |
-| Stats HTTP Endpoint | ~150 |
-| **Total** | **~2300** |

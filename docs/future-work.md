@@ -1,10 +1,36 @@
 # Future Work
 
-Items planned for future implementation.
+Items planned for future implementation. See also [implementation-guide.md](implementation-guide.md) for current status.
+
+## Immediate Priorities
+
+### 1. Integrate LoRa with Transport (BLOCKER)
+
+The LoRa radio driver (`src/lora/radio.rs`) is complete but not connected to the reticulum-rs Transport. Need to:
+1. Create `LoRaInterface` implementing reticulum's Interface trait
+2. Register with `transport.iface_manager().spawn()`
+3. Bridge radio TX/RX with transport channels
+
+### 2. BLE Mesh Interface (BLOCKER)
+
+BLE fragmentation (`src/ble/fragmentation.rs`) is complete. Need to:
+1. Create GATT service for Reticulum packets (separate from WiFi config)
+2. Implement peer discovery and connection management
+3. Bridge GATT RX/TX with transport channels
+
+### 3. Hardware Testing
+
+Flash to actual ESP32 hardware and verify:
+- WiFi connection
+- Testnet connectivity
+- Stats endpoint accessibility
+- Identity persistence across reboots
+
+---
 
 ## BLE Configuration Expansion
 
-Currently the BLE GATT service only configures WiFi credentials. This should be extended to support full node configuration:
+The BLE GATT service (`src/config/ble_service.rs`) currently only configures WiFi credentials. Future extensions:
 
 ### Planned Configuration Options
 
@@ -49,7 +75,7 @@ When implemented, the BLE configuration should allow:
 
 ## Stats HTTP Endpoint
 
-A `/stats` HTTP endpoint for monitoring (see [implementation-guide.md](implementation-guide.md) section 6).
+✅ **Implemented** - See `src/network/stats_server.rs`. Available at `http://localhost:8080/stats`.
 
 ## Interrupt-Driven Radio
 
