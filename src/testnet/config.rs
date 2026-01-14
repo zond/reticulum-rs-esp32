@@ -60,6 +60,7 @@ mod tests {
     }
 
     #[esp32_test]
+    #[allow(clippy::const_is_empty)] // Intentional sanity check that SERVERS wasn't emptied
     fn test_servers_list_not_empty() {
         assert!(!SERVERS.is_empty());
     }

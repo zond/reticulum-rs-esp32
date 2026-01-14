@@ -40,9 +40,12 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
+/// Type alias for the shared link cache to avoid clippy complexity warnings.
+type LinkCache = Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>;
 
 const TESTNET_SERVER: &str = "dublin.connect.reticulum.network:4965";
 
@@ -59,6 +62,37 @@ const MAX_CONCURRENT_LINKS: usize = 20;
 /// Messages are queued when sent to a link that's still establishing.
 /// Once the link activates, queued messages are sent automatically.
 const MAX_QUEUED_MESSAGES_PER_DEST: usize = 5;
+
+/// Time-to-live for queued messages. Messages older than this are dropped
+/// to prevent stale messages from being sent if a link takes too long to
+/// establish or never activates.
+const QUEUE_MESSAGE_TTL: Duration = Duration::from_secs(60);
+
+/// How often to check for and remove expired queued messages.
+const QUEUE_CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
+
+/// A message queued for a pending link.
+#[derive(Clone)]
+struct QueuedMessage {
+    /// The message text.
+    text: String,
+    /// When the message was queued.
+    queued_at: Instant,
+}
+
+impl QueuedMessage {
+    fn new(text: String) -> Self {
+        Self {
+            text,
+            queued_at: Instant::now(),
+        }
+    }
+
+    /// Returns true if this message has expired.
+    fn is_expired(&self) -> bool {
+        self.queued_at.elapsed() > QUEUE_MESSAGE_TTL
+    }
+}
 
 // ESP32: Initialize ESP-IDF before anything else
 #[cfg(feature = "esp32")]
@@ -173,11 +207,10 @@ async fn main() {
     let cancel = CancellationToken::new();
 
     // Track active links for messaging
-    let links: Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let links: LinkCache = Arc::new(Mutex::new(HashMap::new()));
 
     // Queue for messages sent to pending links (sent when link activates)
-    let pending_messages: Arc<Mutex<HashMap<AddressHash, Vec<String>>>> =
+    let pending_messages: Arc<Mutex<HashMap<AddressHash, Vec<QueuedMessage>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
     // Spawn network task (announces, incoming messages, link events)
@@ -209,6 +242,10 @@ async fn main() {
         announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         announce_timer.tick().await; // Skip first
 
+        let mut queue_cleanup_timer = tokio::time::interval(QUEUE_CLEANUP_INTERVAL);
+        queue_cleanup_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        queue_cleanup_timer.tick().await; // Skip first
+
         loop {
             tokio::select! {
                 _ = network_cancel.cancelled() => {
@@ -222,6 +259,24 @@ async fn main() {
                     let t = network_transport.lock().await;
                     t.send_announce(&network_destination, None).await;
                     network_stats.testnet.record_tx();
+                }
+
+                // Periodic cleanup of expired queued messages
+                _ = queue_cleanup_timer.tick() => {
+                    let mut pending = network_pending.lock().await;
+                    let mut total_expired = 0;
+
+                    // Remove expired messages from each queue
+                    pending.retain(|_hash, messages| {
+                        let before = messages.len();
+                        messages.retain(|m| !m.is_expired());
+                        total_expired += before - messages.len();
+                        !messages.is_empty() // Remove entry if queue is now empty
+                    });
+
+                    if total_expired > 0 {
+                        debug!("Expired {} stale queued message(s)", total_expired);
+                    }
                 }
 
                 // Handle incoming announces
@@ -289,28 +344,44 @@ async fn main() {
                                     pending.remove(&event.id).unwrap_or_default()
                                 };
                                 if !messages.is_empty() {
-                                    // Get the link and send queued messages
-                                    let link = {
-                                        let links_guard = network_links.lock().await;
-                                        links_guard.get(&event.id).cloned()
-                                    };
-                                    if let Some(link) = link {
-                                        let mut sent = 0;
-                                        for msg in &messages {
-                                            let link_guard = link.lock().await;
-                                            if let Ok(packet) = link_guard.data_packet(msg.as_bytes()) {
-                                                drop(link_guard);
-                                                let t = network_transport.lock().await;
-                                                t.send_packet(packet).await;
-                                                network_stats.testnet.record_tx();
-                                                sent += 1;
+                                    // Filter out expired messages
+                                    let (valid, expired): (Vec<_>, Vec<_>) =
+                                        messages.into_iter().partition(|m| !m.is_expired());
+
+                                    if !expired.is_empty() {
+                                        debug!(
+                                            "Dropped {} expired message(s) for {:?}",
+                                            expired.len(),
+                                            event.id
+                                        );
+                                    }
+
+                                    if !valid.is_empty() {
+                                        // Get the link and send queued messages
+                                        let link = {
+                                            let links_guard = network_links.lock().await;
+                                            links_guard.get(&event.id).cloned()
+                                        };
+                                        if let Some(link) = link {
+                                            let mut sent = 0;
+                                            for msg in &valid {
+                                                let link_guard = link.lock().await;
+                                                if let Ok(packet) =
+                                                    link_guard.data_packet(msg.text.as_bytes())
+                                                {
+                                                    drop(link_guard);
+                                                    let t = network_transport.lock().await;
+                                                    t.send_packet(packet).await;
+                                                    network_stats.testnet.record_tx();
+                                                    sent += 1;
+                                                }
                                             }
+                                            print_chat(&format!(
+                                                "Link ready, sent {} queued message(s)",
+                                                sent
+                                            ));
+                                            print_prompt();
                                         }
-                                        print_chat(&format!(
-                                            "Link ready, sent {} queued message(s)",
-                                            sent
-                                        ));
-                                        print_prompt();
                                     }
                                 }
                             }
@@ -444,7 +515,7 @@ enum GetLinkResult {
 ///
 /// Returns the link if found or created, or LimitReached if at capacity.
 async fn get_or_create_link(
-    links: &Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>,
+    links: &LinkCache,
     transport: &Arc<Mutex<Transport>>,
     hash: AddressHash,
     descriptor: DestinationDesc,
@@ -472,8 +543,8 @@ async fn handle_command(
     transport: &Arc<Mutex<Transport>>,
     chat_state: &Arc<Mutex<ChatState>>,
     stats: &Arc<NodeStats>,
-    links: &Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>,
-    pending_messages: &Arc<Mutex<HashMap<AddressHash, Vec<String>>>>,
+    links: &LinkCache,
+    pending_messages: &Arc<Mutex<HashMap<AddressHash, Vec<QueuedMessage>>>>,
 ) {
     match cmd {
         ChatCommand::Message { dest_id, text } => {
@@ -530,7 +601,7 @@ async fn handle_command(
                         ));
                         return;
                     }
-                    queue.push(text);
+                    queue.push(QueuedMessage::new(text));
                     let queue_len = queue.len();
                     drop(pending);
                     print_chat(&format!(

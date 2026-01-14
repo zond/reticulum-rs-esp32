@@ -200,7 +200,7 @@ mod tests {
 
         // After consuming half, should be roughly 50% (allow for some refill)
         let percent = limiter.remaining_percent();
-        assert!(percent >= 49.9 && percent <= 51.0);
+        assert!((49.9..=51.0).contains(&percent));
     }
 
     #[esp32_test]

@@ -104,12 +104,12 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 | Extract link helper | DRY "get or create link" pattern |
 | Inbound link cleanup | Remove closed inbound links from cache |
 | Message queueing | Queue messages for pending links, send on activation |
+| Queue message TTL | Expire queued messages after 60s to prevent stale sends |
 
 ### Remaining Improvements
 
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
-| Queue message TTL | Expire queued messages after timeout (prevent stale messages) | Medium |
 | Batch broadcast sends | Create all packets then send in single lock hold | Low |
 | O(1) LRU eviction | Replace O(n) scan with doubly-linked list | Low |
 | Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |

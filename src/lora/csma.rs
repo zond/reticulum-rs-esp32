@@ -495,7 +495,7 @@ mod tests {
     fn test_deterministic_with_same_seed() {
         let config = CsmaConfig::default();
 
-        let mut csma1 = Csma::new(config.clone());
+        let mut csma1 = Csma::new(config);
         let mut csma2 = Csma::new(config);
 
         csma1.seed(12345);
@@ -513,7 +513,7 @@ mod tests {
     fn test_different_seeds_different_results() {
         let config = CsmaConfig::default();
 
-        let mut csma1 = Csma::new(config.clone());
+        let mut csma1 = Csma::new(config);
         let mut csma2 = Csma::new(config);
 
         csma1.seed(11111);
