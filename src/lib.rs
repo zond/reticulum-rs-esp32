@@ -5,6 +5,7 @@
 
 pub mod announce;
 pub mod ble;
+pub mod chat;
 pub mod config;
 pub mod lora;
 pub mod network;
@@ -19,6 +20,7 @@ pub mod wifi;
 // Re-export commonly used items
 pub use announce::{AnnounceCache, AnnounceCacheConfig, AnnounceEntry};
 pub use ble::{Fragment, FragmentError, Fragmenter, Reassembler};
+pub use chat::{ChatCommand, ChatState, KnownDestination, HELP_TEXT};
 pub use config::{ConfigCommand, ConfigError, WifiConfig, WifiStatus};
 pub use lora::{calculate_airtime_ms, calculate_airtime_us, DutyCycleLimiter, LoRaParams};
 pub use network::{NetworkError, NetworkProvider, NodeStats, StatsServer, DEFAULT_STATS_PORT};

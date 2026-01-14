@@ -1,26 +1,41 @@
-//! Unified Reticulum node binary.
+//! Unified Reticulum node binary with chat interface.
 //!
 //! Runs on both ESP32 and host platforms:
 //! - **Host**: `cargo run --bin node`
 //! - **ESP32**: `cargo espflash flash --bin node --features esp32 --release`
 //!
-//! Stats endpoint: http://localhost:8080/stats
+//! ## Chat Commands
+//!
+//! Connect via serial monitor and type commands:
+//! - `msg <id> <text>` - Send message to destination
+//! - `broadcast <text>` - Send to all known destinations
+//! - `list` - Show known destinations
+//! - `status` - Show node status
+//! - `help` - Show help
+//!
+//! ## Endpoints
+//!
+//! - Stats: http://localhost:8080/stats
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
+use reticulum::destination::link::{Link, LinkEvent};
 use reticulum::destination::DestinationName;
+use reticulum::hash::AddressHash;
 use reticulum::iface::tcp_client::TcpClient;
 use reticulum::transport::{Transport, TransportConfig};
+use reticulum_rs_esp32::chat::{self, ChatCommand, ChatState};
 use reticulum_rs_esp32::{NodeStats, StatsServer, DEFAULT_STATS_PORT};
+use std::collections::HashMap;
+use std::io::{BufRead, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 const TESTNET_SERVER: &str = "dublin.connect.reticulum.network:4965";
 
 /// How often to re-announce our presence to the network.
-/// Reticulum announces typically have a TTL, so periodic re-announcement
-/// ensures our paths stay fresh in the network.
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 
 // ESP32: Initialize ESP-IDF before anything else
@@ -35,6 +50,18 @@ fn platform_init() {
 #[cfg(not(feature = "esp32"))]
 fn platform_init() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+}
+
+/// Print a message to stdout (for chat output).
+fn print_chat(msg: &str) {
+    println!("{}", msg);
+    let _ = std::io::stdout().flush();
+}
+
+/// Print the prompt.
+fn print_prompt() {
+    print!("> ");
+    let _ = std::io::stdout().flush();
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -62,10 +89,11 @@ async fn main() {
         .expect("Failed to load/create identity");
 
     let identity_hash = identity.address_hash().to_string();
+    let identity_short = identity_hash.chars().take(8).collect::<String>();
     info!("Node identity: {}", identity_hash);
 
-    // Start stats server (held until end of main for proper cleanup)
-    let stats = Arc::new(NodeStats::new(identity_hash));
+    // Start stats server
+    let stats = Arc::new(NodeStats::new(identity_hash.clone()));
     let _stats_server = match StatsServer::start(None, DEFAULT_STATS_PORT, stats.clone()) {
         Ok(server) => {
             info!(
@@ -80,97 +108,165 @@ async fn main() {
         }
     };
 
+    // Initialize chat state
+    let chat_state = Arc::new(Mutex::new(ChatState::new(identity_short.clone())));
+
     // Create reticulum transport
-    let mut transport = Transport::new(TransportConfig::default());
+    let transport = Arc::new(Mutex::new(Transport::new(TransportConfig::default())));
 
-    // Connect to testnet
+    // Connect to testnet (may fail if no WiFi configured - that's OK for local testing)
     info!("Connecting to testnet: {}", TESTNET_SERVER);
-    transport
-        .iface_manager()
-        .lock()
-        .await
-        .spawn(TcpClient::new(TESTNET_SERVER), TcpClient::spawn);
-
-    info!("Connected to testnet");
+    {
+        let t = transport.lock().await;
+        t.iface_manager()
+            .lock()
+            .await
+            .spawn(TcpClient::new(TESTNET_SERVER), TcpClient::spawn);
+    }
+    info!("Testnet interface spawned");
 
     // Create and register our destination
-    let dest_name = DestinationName::new("reticulum_rs_esp32", "node");
-    let destination = transport.add_destination(identity, dest_name).await;
+    let dest_name = DestinationName::new("reticulum_rs_esp32", "chat");
+    let destination = {
+        let mut t = transport.lock().await;
+        t.add_destination(identity, dest_name).await
+    };
 
-    // Announce our presence to the network
+    // Announce our presence
     info!("Announcing to network...");
-    transport.send_announce(&destination, None).await;
+    {
+        let t = transport.lock().await;
+        t.send_announce(&destination, None).await;
+    }
     stats.testnet.record_tx();
-    info!("Announce sent, listening for other announces...");
+    info!("Announce sent");
 
-    // Initialize LoRa interface on ESP32
-    // Note: Requires hardware peripherals and 'static lifetimes. The LoRaInterface
-    // adapter is implemented in src/lora/iface.rs. Full integration requires:
-    // 1. Taking ESP32 peripherals at startup
-    // 2. Creating LoRaRadio with the SPI and GPIO pins
-    // 3. Initializing the radio
-    // 4. Spawning the interface with the transport
-    //
-    // Example integration (when hardware is available):
-    // ```
-    // let peripherals = esp_idf_hal::prelude::Peripherals::take().unwrap();
-    // let mut radio = LoRaRadio::new(
-    //     peripherals.spi2, peripherals.pins.gpio12, peripherals.pins.gpio11,
-    //     peripherals.pins.gpio13, peripherals.pins.gpio10, peripherals.pins.gpio5,
-    //     peripherals.pins.gpio4, peripherals.pins.gpio1, Region::Eu868,
-    // ).expect("Failed to create radio");
-    // radio.init().expect("Failed to initialize radio");
-    // let lora_iface = LoRaInterface::new(radio);
-    // transport.iface_manager().lock().await.spawn(lora_iface, LoRaInterface::spawn);
-    // ```
+    // LoRa interface placeholder
     #[cfg(feature = "esp32")]
     {
         info!("LoRa interface: not initialized (requires hardware testing)");
-        info!("See src/lora/iface.rs for the interface adapter implementation");
     }
 
-    // Set up cancellation for graceful shutdown
+    // Set up cancellation
     let cancel = CancellationToken::new();
 
-    // Spawn main network task (listens for announces + periodic re-announcement)
-    let stats_clone = stats.clone();
-    let cancel_clone = cancel.clone();
+    // Track active links for messaging
+    let links: Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    // Spawn network task (announces, incoming messages, link events)
+    let network_transport = transport.clone();
+    let network_stats = stats.clone();
+    let network_cancel = cancel.clone();
+    let network_chat = chat_state.clone();
+    let network_links = links.clone();
+    let network_destination = destination.clone();
+
     let network_task = tokio::spawn(async move {
-        let mut announces = transport.recv_announces().await;
+        let mut announces = {
+            let t = network_transport.lock().await;
+            t.recv_announces().await
+        };
+
+        let mut in_link_events = {
+            let t = network_transport.lock().await;
+            t.in_link_events()
+        };
+
+        let mut out_link_events = {
+            let t = network_transport.lock().await;
+            t.out_link_events()
+        };
+
         let mut announce_timer = tokio::time::interval(ANNOUNCE_INTERVAL);
-        // Use Delay behavior to prevent burst re-announcements if ticks are missed
         announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // Skip the first tick (we already announced at startup)
-        announce_timer.tick().await;
+        announce_timer.tick().await; // Skip first
 
         loop {
             tokio::select! {
-                _ = cancel_clone.cancelled() => {
+                _ = network_cancel.cancelled() => {
                     info!("Network task shutting down");
                     break;
                 }
+
                 // Periodic re-announcement
                 _ = announce_timer.tick() => {
-                    info!("Sending periodic announce...");
-                    transport.send_announce(&destination, None).await;
-                    stats_clone.testnet.record_tx();
+                    debug!("Sending periodic announce...");
+                    let t = network_transport.lock().await;
+                    t.send_announce(&network_destination, None).await;
+                    network_stats.testnet.record_tx();
                 }
-                // Listen for announces from other nodes
+
+                // Handle incoming announces
                 result = announces.recv() => {
                     match result {
                         Ok(announce) => {
                             let dest = announce.destination.lock().await;
-                            let hash = &dest.desc.address_hash;
-                            info!("Received announce: {:?}", hash);
+                            let hash = dest.desc.address_hash;
+                            let desc = dest.desc;
+                            drop(dest); // Release lock
 
-                            // Update stats (note: announce_cache_size tracks total received,
-                            // not actual cache size - real cache is managed by reticulum-rs)
-                            stats_clone.testnet.record_rx();
-                            stats_clone.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
+                            debug!("Received announce: {:?}", hash);
+                            network_stats.testnet.record_rx();
+                            network_stats.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
+
+                            // Add to chat state
+                            {
+                                let mut state = network_chat.lock().await;
+                                state.add_destination(hash, desc);
+                            }
                         }
                         Err(e) => {
                             warn!("Announce channel error: {}", e);
-                            break;
+                        }
+                    }
+                }
+
+                // Handle incoming link data
+                result = in_link_events.recv() => {
+                    if let Ok(event) = result {
+                        match event.event {
+                            LinkEvent::Activated => {
+                                debug!("Inbound link activated: {:?}", event.id);
+                            }
+                            LinkEvent::Data(payload) => {
+                                // Display incoming message
+                                let msg = chat::format_incoming_message(
+                                    &event.id,
+                                    payload.as_slice()
+                                );
+                                print_chat(&msg);
+                                print_prompt();
+                            }
+                            LinkEvent::Closed => {
+                                debug!("Inbound link closed: {:?}", event.id);
+                            }
+                        }
+                    }
+                }
+
+                // Handle outgoing link events
+                result = out_link_events.recv() => {
+                    if let Ok(event) = result {
+                        match event.event {
+                            LinkEvent::Activated => {
+                                debug!("Outbound link activated: {:?}", event.id);
+                            }
+                            LinkEvent::Data(payload) => {
+                                // Response on outbound link
+                                let msg = chat::format_incoming_message(
+                                    &event.id,
+                                    payload.as_slice()
+                                );
+                                print_chat(&msg);
+                                print_prompt();
+                            }
+                            LinkEvent::Closed => {
+                                debug!("Outbound link closed: {:?}", event.id);
+                                // Remove closed link from cache
+                                let mut links_guard = network_links.lock().await;
+                                links_guard.remove(&event.id);
+                            }
                         }
                     }
                 }
@@ -178,13 +274,53 @@ async fn main() {
         }
     });
 
-    info!("Node running (Ctrl+C to exit)...");
+    // Print welcome message
+    print_chat("");
+    print_chat("=== Reticulum Chat ===");
+    print_chat(&format!("Identity: {}", identity_short));
+    print_chat("Type 'help' for commands");
+    print_chat("");
+    print_prompt();
 
-    // Wait for shutdown signal or task completion
+    // Spawn stdin reader task
+    let stdin_transport = transport.clone();
+    let stdin_chat = chat_state.clone();
+    let stdin_stats = stats.clone();
+    let stdin_links = links.clone();
+    let stdin_cancel = cancel.clone();
+
+    let stdin_task = tokio::task::spawn_blocking(move || {
+        let stdin = std::io::stdin();
+        let mut lines = stdin.lock().lines();
+
+        while !stdin_cancel.is_cancelled() {
+            if let Some(Ok(line)) = lines.next() {
+                let cmd = ChatCommand::parse(&line);
+
+                // We need to handle commands in a blocking context
+                // Use a channel to send commands to an async handler
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    handle_command(
+                        cmd,
+                        &stdin_transport,
+                        &stdin_chat,
+                        &stdin_stats,
+                        &stdin_links,
+                    )
+                    .await;
+                });
+
+                print_prompt();
+            }
+        }
+    });
+
+    // Wait for shutdown
     #[cfg(not(feature = "esp32"))]
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            info!("Received Ctrl+C, shutting down...");
+            print_chat("\nShutting down...");
             cancel.cancel();
         }
         result = network_task => {
@@ -192,18 +328,141 @@ async fn main() {
                 error!("Network task error: {}", e);
             }
         }
+        result = stdin_task => {
+            if let Err(e) = result {
+                error!("Stdin task error: {}", e);
+            }
+        }
     }
 
-    // ESP32: No signal handling (no POSIX signals on espidf), just wait for task.
-    // The cancel token is unused but kept for API consistency - the node runs
-    // until hardware reset or power loss.
     #[cfg(feature = "esp32")]
     {
         let _ = cancel;
-        if let Err(e) = network_task.await {
-            error!("Network task error: {}", e);
+        tokio::select! {
+            result = network_task => {
+                if let Err(e) = result {
+                    error!("Network task error: {}", e);
+                }
+            }
+            result = stdin_task => {
+                if let Err(e) = result {
+                    error!("Stdin task error: {}", e);
+                }
+            }
         }
     }
 
     info!("Shutdown complete");
+}
+
+/// Handle a parsed chat command.
+async fn handle_command(
+    cmd: ChatCommand,
+    transport: &Arc<Mutex<Transport>>,
+    chat_state: &Arc<Mutex<ChatState>>,
+    stats: &Arc<NodeStats>,
+    links: &Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>,
+) {
+    match cmd {
+        ChatCommand::Message { dest_id, text } => {
+            let state = chat_state.lock().await;
+            if let Some(dest) = state.get_destination(&dest_id) {
+                let hash = dest.hash;
+                let descriptor = dest.descriptor;
+                let display_name = dest.display_name.clone();
+                drop(state);
+
+                // Get or create link
+                let link = {
+                    let mut links_guard = links.lock().await;
+                    if let Some(link) = links_guard.get(&hash) {
+                        link.clone()
+                    } else {
+                        // Create new link
+                        let t = transport.lock().await;
+                        let new_link = t.link(descriptor).await;
+                        links_guard.insert(hash, new_link.clone());
+                        print_chat(&format!("Creating link to {}...", display_name));
+                        new_link
+                    }
+                };
+
+                // Send message via link
+                let link_guard = link.lock().await;
+                match link_guard.data_packet(text.as_bytes()) {
+                    Ok(packet) => {
+                        drop(link_guard);
+                        let t = transport.lock().await;
+                        t.send_packet(packet).await;
+                        stats.testnet.record_tx();
+                        print_chat(&format!("Sent to {}", display_name));
+                    }
+                    Err(e) => {
+                        print_chat(&format!("Error: Link not ready ({:?})", e));
+                    }
+                }
+            } else {
+                print_chat(&format!("Unknown destination: {}", dest_id));
+                print_chat("Use 'list' to see known destinations");
+            }
+        }
+
+        ChatCommand::Broadcast { text } => {
+            let state = chat_state.lock().await;
+            let destinations: Vec<_> = state.all_destinations().to_vec();
+            drop(state);
+
+            if destinations.is_empty() {
+                print_chat("No known destinations. Wait for announces...");
+                return;
+            }
+
+            let mut sent = 0;
+            for dest in destinations {
+                // Get or create link
+                let link = {
+                    let mut links_guard = links.lock().await;
+                    if let Some(link) = links_guard.get(&dest.hash) {
+                        link.clone()
+                    } else {
+                        let t = transport.lock().await;
+                        let new_link = t.link(dest.descriptor).await;
+                        links_guard.insert(dest.hash, new_link.clone());
+                        new_link
+                    }
+                };
+
+                let link_guard = link.lock().await;
+                if let Ok(packet) = link_guard.data_packet(text.as_bytes()) {
+                    drop(link_guard);
+                    let t = transport.lock().await;
+                    t.send_packet(packet).await;
+                    stats.testnet.record_tx();
+                    sent += 1;
+                }
+            }
+
+            print_chat(&format!("Broadcast sent to {} destination(s)", sent));
+        }
+
+        ChatCommand::List => {
+            let state = chat_state.lock().await;
+            print_chat(&state.format_list());
+        }
+
+        ChatCommand::Status => {
+            let state = chat_state.lock().await;
+            print_chat(&state.format_status());
+        }
+
+        ChatCommand::Help => {
+            print_chat(chat::HELP_TEXT);
+        }
+
+        ChatCommand::Unknown(msg) => {
+            if !msg.is_empty() {
+                print_chat(&msg);
+            }
+        }
+    }
 }
