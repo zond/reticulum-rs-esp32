@@ -103,11 +103,30 @@ async fn main() {
     stats.testnet.record_tx();
     info!("Announce sent, listening for other announces...");
 
-    // TODO: Initialize LoRa interface on ESP32
+    // Initialize LoRa interface on ESP32
+    // Note: Requires hardware peripherals and 'static lifetimes. The LoRaInterface
+    // adapter is implemented in src/lora/iface.rs. Full integration requires:
+    // 1. Taking ESP32 peripherals at startup
+    // 2. Creating LoRaRadio with the SPI and GPIO pins
+    // 3. Initializing the radio
+    // 4. Spawning the interface with the transport
+    //
+    // Example integration (when hardware is available):
+    // ```
+    // let peripherals = esp_idf_hal::prelude::Peripherals::take().unwrap();
+    // let mut radio = LoRaRadio::new(
+    //     peripherals.spi2, peripherals.pins.gpio12, peripherals.pins.gpio11,
+    //     peripherals.pins.gpio13, peripherals.pins.gpio10, peripherals.pins.gpio5,
+    //     peripherals.pins.gpio4, peripherals.pins.gpio1, Region::Eu868,
+    // ).expect("Failed to create radio");
+    // radio.init().expect("Failed to initialize radio");
+    // let lora_iface = LoRaInterface::new(radio);
+    // transport.iface_manager().lock().await.spawn(lora_iface, LoRaInterface::spawn);
+    // ```
     #[cfg(feature = "esp32")]
     {
-        info!("TODO: LoRa interface not yet integrated with reticulum transport");
-        // Future: spawn LoRa interface here
+        info!("LoRa interface: not initialized (requires hardware testing)");
+        info!("See src/lora/iface.rs for the interface adapter implementation");
     }
 
     // Set up cancellation for graceful shutdown

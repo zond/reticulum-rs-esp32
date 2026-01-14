@@ -6,12 +6,15 @@
 //! - [`airtime`]: Time-on-air calculation for LoRa packets
 //! - [`csma`]: CSMA/CA collision avoidance for shared frequencies
 //! - [`radio`]: SX1262 radio driver (ESP32 only)
+//! - [`iface`]: Reticulum-rs transport interface adapter (ESP32 only)
 
 mod airtime;
 mod config;
 mod csma;
 mod duty_cycle;
 
+#[cfg(feature = "esp32")]
+mod iface;
 #[cfg(feature = "esp32")]
 mod radio;
 
@@ -23,5 +26,7 @@ pub use config::{
 pub use csma::{Csma, CsmaConfig, CsmaError, CsmaResult};
 pub use duty_cycle::DutyCycleLimiter;
 
+#[cfg(feature = "esp32")]
+pub use iface::LoRaInterface;
 #[cfg(feature = "esp32")]
 pub use radio::{LoRaRadio, RadioError, ReceivedPacket};

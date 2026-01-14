@@ -4,12 +4,14 @@ Items planned for future implementation. See also [implementation-guide.md](impl
 
 ## Immediate Priorities
 
-### 1. Integrate LoRa with Transport (BLOCKER)
+### 1. Integrate LoRa with Transport (Hardware Testing Required)
 
-The LoRa radio driver (`src/lora/radio.rs`) is complete but not connected to the reticulum-rs Transport. Need to:
-1. Create `LoRaInterface` implementing reticulum's Interface trait
-2. Register with `transport.iface_manager().spawn()`
-3. Bridge radio TX/RX with transport channels
+✅ **Interface adapter implemented** - See `src/lora/iface.rs`.
+
+The `LoRaInterface` implements reticulum's Interface trait and bridges the radio with transport channels. Remaining work:
+1. Test on actual ESP32 hardware with LILYGO T3-S3 board
+2. Verify SPI and GPIO pin assignments
+3. Validate LoRa TX/RX through the transport layer
 
 ### 2. BLE Mesh Interface (BLOCKER)
 
