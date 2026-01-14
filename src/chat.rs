@@ -43,6 +43,10 @@ const MAX_KNOWN_DESTINATIONS: usize = 100;
 const DISPLAY_HASH_CHARS: usize = 8;
 
 /// Format an address hash as a short lowercase display string.
+///
+/// Note: Uses Debug formatting which may be fragile if the AddressHash
+/// Debug impl changes. Consider using a proper hex display method if
+/// one becomes available in reticulum-rs.
 fn format_hash_short(hash: &AddressHash) -> String {
     format!("{:?}", hash)
         .to_lowercase()

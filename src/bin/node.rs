@@ -38,6 +38,10 @@ const TESTNET_SERVER: &str = "dublin.connect.reticulum.network:4965";
 /// How often to re-announce our presence to the network.
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 
+/// Maximum concurrent links to prevent memory exhaustion.
+/// Each Link holds crypto state and buffers, so limit concurrent connections.
+const MAX_CONCURRENT_LINKS: usize = 20;
+
 // ESP32: Initialize ESP-IDF before anything else
 #[cfg(feature = "esp32")]
 fn platform_init() {
@@ -208,12 +212,14 @@ async fn main() {
 
                             debug!("Received announce: {:?}", hash);
                             network_stats.testnet.record_rx();
-                            network_stats.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
 
-                            // Add to chat state
-                            {
+                            // Add to chat state (only increment cache size if actually added)
+                            let added = {
                                 let mut state = network_chat.lock().await;
-                                state.add_destination(hash, desc);
+                                state.add_destination(hash, desc)
+                            };
+                            if added {
+                                network_stats.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                         Err(e) => {
@@ -372,20 +378,25 @@ async fn handle_command(
                 let display_name = dest.display_name.clone();
                 drop(state);
 
-                // Get or create link
+                // Get or create link (with concurrent limit to prevent memory exhaustion)
                 let link = {
                     let mut links_guard = links.lock().await;
                     if let Some(link) = links_guard.get(&hash) {
-                        link.clone()
+                        Some(link.clone())
+                    } else if links_guard.len() >= MAX_CONCURRENT_LINKS {
+                        print_chat("Too many active links. Wait for some to close.");
+                        None
                     } else {
                         // Create new link
                         let t = transport.lock().await;
                         let new_link = t.link(descriptor).await;
                         links_guard.insert(hash, new_link.clone());
                         print_chat(&format!("Creating link to {}...", display_name));
-                        new_link
+                        Some(new_link)
                     }
                 };
+
+                let Some(link) = link else { return };
 
                 // Send message via link
                 let link_guard = link.lock().await;
@@ -418,19 +429,25 @@ async fn handle_command(
             }
 
             let mut sent = 0;
+            let mut skipped = 0;
             for dest in destinations {
-                // Get or create link
+                // Get or create link (with concurrent limit to prevent memory exhaustion)
                 let link = {
                     let mut links_guard = links.lock().await;
                     if let Some(link) = links_guard.get(&dest.hash) {
-                        link.clone()
+                        Some(link.clone())
+                    } else if links_guard.len() >= MAX_CONCURRENT_LINKS {
+                        skipped += 1;
+                        None
                     } else {
                         let t = transport.lock().await;
                         let new_link = t.link(dest.descriptor).await;
                         links_guard.insert(dest.hash, new_link.clone());
-                        new_link
+                        Some(new_link)
                     }
                 };
+
+                let Some(link) = link else { continue };
 
                 let link_guard = link.lock().await;
                 if let Ok(packet) = link_guard.data_packet(text.as_bytes()) {
@@ -442,7 +459,14 @@ async fn handle_command(
                 }
             }
 
-            print_chat(&format!("Broadcast sent to {} destination(s)", sent));
+            if skipped > 0 {
+                print_chat(&format!(
+                    "Broadcast sent to {} destination(s), {} skipped (link limit)",
+                    sent, skipped
+                ));
+            } else {
+                print_chat(&format!("Broadcast sent to {} destination(s)", sent));
+            }
         }
 
         ChatCommand::List => {

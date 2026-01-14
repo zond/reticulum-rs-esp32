@@ -82,3 +82,25 @@ When implemented, the BLE configuration should allow:
 ## Interrupt-Driven Radio
 
 The LoRa radio driver currently uses polling. Switching to DIO1 interrupt would improve power efficiency. See TODO in `src/lora/radio.rs:138`.
+
+## Chat Interface Improvements
+
+The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitations:
+
+### Known Limitations
+
+1. **Stdin blocking on ESP32** - The stdin reader uses `spawn_blocking` which cannot be cancelled mid-read. On ESP32, the task runs forever if no input arrives. No clean shutdown mechanism exists. (See `src/bin/node.rs:298`)
+
+2. **Link activation delay** - Newly created links need time to complete the handshake before `data_packet()` succeeds. Users may see "Link not ready" errors on first message to a destination. Consider implementing a message queue that sends on activation.
+
+3. **Linear search for hash prefix** - `get_destination()` does O(n) search when matching by hash prefix. With MAX_KNOWN_DESTINATIONS=100, this is acceptable but could be improved with a trie.
+
+### Potential Improvements
+
+| Improvement | Description | Priority |
+|-------------|-------------|----------|
+| LRU cache eviction | When destination cache is full, evict oldest instead of ignoring new | Medium |
+| Link state checking | Check if link is activated before attempting to send | Medium |
+| Message queueing | Queue messages for pending links, send on activation | Low |
+| Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |
+| Extract link helper | DRY up "get or create link" pattern | Low |
