@@ -12,8 +12,13 @@ name = "reticulum_rs_esp32"
 path = "src/lib.rs"
 
 [[bin]]
-name = "reticulum-rs-esp32"
-path = "src/main.rs"
+name = "node"
+path = "src/bin/node.rs"
+test = false
+
+[[bin]]
+name = "flash-esp32"
+path = "src/bin/flash-esp32.rs"
 test = false
 
 [[bin]]
@@ -26,21 +31,6 @@ name = "production-flash"
 path = "src/bin/production-flash.rs"
 test = false
 
-[[bin]]
-name = "flash-esp32"
-path = "src/bin/flash-esp32.rs"
-test = false
-
-[[bin]]
-name = "flash-qemu"
-path = "src/bin/flash-qemu.rs"
-test = false
-
-[[bin]]
-name = "host-node"
-path = "src/bin/host-node.rs"
-test = false
-
 [features]
 default = []
 esp32 = [
@@ -50,15 +40,8 @@ esp32 = [
     "dep:esp32-nimble",
     "dep:sx1262",
     "dep:regiface",
-    "dep:reticulum",
     "dep:rand_core",
 ]
-
-# Network features (mutually exclusive)
-# ESP32: WiFi-based networking
-network-wifi = ["esp32", "dep:tiny_http"]
-# Host: Native OS networking
-network-host = ["dep:tiny_http"]
 
 # Region selection (pick one, EU868 is default)
 region-eu868 = []
@@ -81,7 +64,12 @@ sx1262 = { version = "0.3", optional = true }
 regiface = { version = "0.2.5", optional = true }
 
 # Reticulum-rs (using fork with ESP32 compatibility patches)
-reticulum = { git = "https://github.com/zond/Reticulum-rs", branch = "esp32-compat", default-features = false, features = ["alloc"], optional = true }
+# Always included - only QEMU skips the network loop at runtime
+reticulum = { git = "https://github.com/zond/Reticulum-rs", branch = "esp32-compat", default-features = false, features = ["alloc"] }
+
+# Async runtime - reticulum brings tokio but we need extra features
+tokio = { version = "1.44", features = ["macros", "signal"] }
+tokio-util = "0.7"
 
 # Random number generation (for identity creation, only for esp32 target)
 rand_core = { version = "0.6", features = ["getrandom"], optional = true }
@@ -94,9 +82,10 @@ env_logger = "0.11"
 zeroize = { version = "1.7", features = ["derive"] }
 
 # HTTP server for stats endpoint (works on both host and ESP32)
-tiny_http = { version = "0.12", optional = true }
+tiny_http = "0.12"
 
-# Test macro
+[dev-dependencies]
+# Test macro for #[esp32_test]
 reticulum-rs-esp32-macros = { path = "macros" }
 
 [build-dependencies]

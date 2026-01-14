@@ -1,9 +1,8 @@
 //! Network abstraction layer.
 //!
-//! This module provides a platform-independent network interface that works on:
-//! - **ESP32** (`network-wifi` feature): WiFi-based connectivity
-//! - **Host** (`network-host` feature): Native OS networking
-//! - **QEMU**: No network (neither feature enabled)
+//! This module provides a platform-independent network interface:
+//! - **ESP32** (`esp32` feature): WiFi-based connectivity
+//! - **Host** (default): Native OS networking
 //!
 //! # Example
 //!
@@ -11,10 +10,10 @@
 //! use reticulum_rs_esp32::network::NetworkProvider;
 //!
 //! // Platform-specific initialization
-//! #[cfg(feature = "network-wifi")]
+//! #[cfg(feature = "esp32")]
 //! let mut network = network::WifiNetwork::new(modem, sysloop, nvs)?;
 //!
-//! #[cfg(feature = "network-host")]
+//! #[cfg(not(feature = "esp32"))]
 //! let mut network = network::HostNetwork::new();
 //!
 //! // Same code for both platforms
@@ -24,23 +23,21 @@
 
 use std::net::IpAddr;
 
-#[cfg(feature = "network-wifi")]
+#[cfg(feature = "esp32")]
 mod wifi;
 
-#[cfg(feature = "network-host")]
+#[cfg(not(feature = "esp32"))]
 mod host;
 
-#[cfg(any(feature = "network-wifi", feature = "network-host"))]
 mod stats_server;
 
 // Re-exports
-#[cfg(feature = "network-wifi")]
+#[cfg(feature = "esp32")]
 pub use wifi::WifiNetwork;
 
-#[cfg(feature = "network-host")]
+#[cfg(not(feature = "esp32"))]
 pub use host::HostNetwork;
 
-#[cfg(any(feature = "network-wifi", feature = "network-host"))]
 pub use stats_server::{NodeStats, StatsServer, DEFAULT_STATS_PORT};
 
 /// Network provider abstraction.
@@ -69,7 +66,7 @@ pub enum NetworkError {
     /// No WiFi credentials configured (ESP32).
     NotConfigured,
     /// WiFi connection failed (ESP32).
-    #[cfg(feature = "network-wifi")]
+    #[cfg(feature = "esp32")]
     WifiError(crate::wifi::WifiError),
     /// Generic I/O error.
     Io(std::io::Error),
@@ -79,7 +76,7 @@ impl std::fmt::Display for NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotConfigured => write!(f, "network not configured"),
-            #[cfg(feature = "network-wifi")]
+            #[cfg(feature = "esp32")]
             Self::WifiError(e) => write!(f, "WiFi error: {}", e),
             Self::Io(e) => write!(f, "I/O error: {}", e),
         }
@@ -89,10 +86,10 @@ impl std::fmt::Display for NetworkError {
 impl std::error::Error for NetworkError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            #[cfg(feature = "network-wifi")]
+            Self::NotConfigured => None,
+            #[cfg(feature = "esp32")]
             Self::WifiError(e) => Some(e),
             Self::Io(e) => Some(e),
-            _ => None,
         }
     }
 }
@@ -103,14 +100,14 @@ impl From<std::io::Error> for NetworkError {
     }
 }
 
-#[cfg(feature = "network-wifi")]
+#[cfg(feature = "esp32")]
 impl From<crate::wifi::WifiError> for NetworkError {
     fn from(e: crate::wifi::WifiError) -> Self {
         Self::WifiError(e)
     }
 }
 
-#[cfg(feature = "network-wifi")]
+#[cfg(feature = "esp32")]
 impl From<esp_idf_sys::EspError> for NetworkError {
     fn from(e: esp_idf_sys::EspError) -> Self {
         Self::Io(std::io::Error::new(

@@ -1,17 +1,20 @@
-//! Flash firmware to ESP32-S3 hardware.
+//! Flash node binary to ESP32-S3 hardware.
+//!
+//! Usage: cargo run --bin flash-esp32
 
 use std::process::{exit, Command};
 
 fn main() {
-    println!("=== Building for ESP32-S3 ===\n");
+    println!("=== Building node for ESP32-S3 ===\n");
 
     let status = Command::new("cargo")
         .args([
             "build",
+            "--bin",
+            "node",
             "--release",
             "--target",
             "xtensa-esp32s3-espidf",
-            "--no-default-features",
             "--features",
             "esp32",
         ])
@@ -28,7 +31,7 @@ fn main() {
         .args([
             "flash",
             "--monitor",
-            "target/xtensa-esp32s3-espidf/release/reticulum-rs-esp32",
+            "target/xtensa-esp32s3-espidf/release/node",
         ])
         .status();
 
