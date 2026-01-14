@@ -38,9 +38,7 @@
 //!   - Disabling BLE advertising after successful WiFi connection
 //!   - Implementing a physical button requirement to enable configuration mode
 
-use super::wifi::{
-    ConfigCommand, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN,
-};
+use super::wifi::{ConfigCommand, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN};
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{uuid128, BLEDevice, BLEServer, NimbleProperties};
 use std::sync::{Arc, Mutex};

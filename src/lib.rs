@@ -7,6 +7,8 @@ pub mod announce;
 pub mod ble;
 pub mod config;
 pub mod lora;
+#[cfg(any(feature = "network-wifi", feature = "network-host"))]
+pub mod network;
 #[cfg(feature = "esp32")]
 pub mod persistence;
 pub mod routing;
@@ -20,6 +22,15 @@ pub use config::{ConfigCommand, ConfigError, WifiConfig, WifiStatus};
 pub use lora::{calculate_airtime_ms, calculate_airtime_us, DutyCycleLimiter, LoRaParams};
 pub use routing::{InterfaceType, PathEntry, PathTable, PathTableConfig, RoutingMetrics};
 pub use testnet::{TestnetServer, TestnetTransport, TransportError, DEFAULT_SERVER, SERVERS};
+
+#[cfg(any(feature = "network-wifi", feature = "network-host"))]
+pub use network::{NetworkError, NetworkProvider, NodeStats, StatsServer, DEFAULT_STATS_PORT};
+
+#[cfg(feature = "network-wifi")]
+pub use network::WifiNetwork;
+
+#[cfg(feature = "network-host")]
+pub use network::HostNetwork;
 
 /// Initialize ESP-IDF for tests. Uses Once to ensure it only runs once.
 /// This is a no-op on non-ESP32 targets.
