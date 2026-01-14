@@ -13,9 +13,15 @@ use reticulum::transport::{Transport, TransportConfig};
 use reticulum_rs_esp32::{NodeStats, StatsServer, DEFAULT_STATS_PORT};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 const TESTNET_SERVER: &str = "dublin.connect.reticulum.network:4965";
+
+/// How often to re-announce our presence to the network.
+/// Reticulum announces typically have a TTL, so periodic re-announcement
+/// ensures our paths stay fresh in the network.
+const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 
 // ESP32: Initialize ESP-IDF before anything else
 #[cfg(feature = "esp32")]
@@ -94,6 +100,7 @@ async fn main() {
     // Announce our presence to the network
     info!("Announcing to network...");
     transport.send_announce(&destination, None).await;
+    stats.testnet.record_tx();
     info!("Announce sent, listening for other announces...");
 
     // TODO: Initialize LoRa interface on ESP32
@@ -106,26 +113,39 @@ async fn main() {
     // Set up cancellation for graceful shutdown
     let cancel = CancellationToken::new();
 
-    // Spawn announce listener task
+    // Spawn main network task (listens for announces + periodic re-announcement)
     let stats_clone = stats.clone();
     let cancel_clone = cancel.clone();
-    let announce_task = tokio::spawn(async move {
+    let network_task = tokio::spawn(async move {
         let mut announces = transport.recv_announces().await;
+        let mut announce_timer = tokio::time::interval(ANNOUNCE_INTERVAL);
+        // Use Delay behavior to prevent burst re-announcements if ticks are missed
+        announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Skip the first tick (we already announced at startup)
+        announce_timer.tick().await;
 
         loop {
             tokio::select! {
                 _ = cancel_clone.cancelled() => {
-                    info!("Announce listener shutting down");
+                    info!("Network task shutting down");
                     break;
                 }
+                // Periodic re-announcement
+                _ = announce_timer.tick() => {
+                    info!("Sending periodic announce...");
+                    transport.send_announce(&destination, None).await;
+                    stats_clone.testnet.record_tx();
+                }
+                // Listen for announces from other nodes
                 result = announces.recv() => {
                     match result {
                         Ok(announce) => {
-                            let destination = announce.destination.lock().await;
-                            let hash = &destination.desc.address_hash;
+                            let dest = announce.destination.lock().await;
+                            let hash = &dest.desc.address_hash;
                             info!("Received announce: {:?}", hash);
 
-                            // Update stats
+                            // Update stats (note: announce_cache_size tracks total received,
+                            // not actual cache size - real cache is managed by reticulum-rs)
                             stats_clone.testnet.record_rx();
                             stats_clone.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
                         }
@@ -148,19 +168,21 @@ async fn main() {
             info!("Received Ctrl+C, shutting down...");
             cancel.cancel();
         }
-        result = announce_task => {
+        result = network_task => {
             if let Err(e) = result {
-                error!("Announce task error: {}", e);
+                error!("Network task error: {}", e);
             }
         }
     }
 
-    // ESP32: No signal handling, just wait for task
+    // ESP32: No signal handling (no POSIX signals on espidf), just wait for task.
+    // The cancel token is unused but kept for API consistency - the node runs
+    // until hardware reset or power loss.
     #[cfg(feature = "esp32")]
     {
         let _ = cancel;
-        if let Err(e) = announce_task.await {
-            error!("Announce task error: {}", e);
+        if let Err(e) = network_task.await {
+            error!("Network task error: {}", e);
         }
     }
 
