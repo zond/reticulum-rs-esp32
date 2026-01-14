@@ -121,17 +121,21 @@ impl ChatState {
 
     /// Add or update a known destination.
     ///
-    /// Returns `true` if added, `false` if updated or cache is full.
+    /// Returns `true` if this is a new destination, `false` if updated existing.
+    /// When the cache is full, evicts the least recently seen destination.
     pub fn add_destination(&mut self, hash: AddressHash, descriptor: DestinationDesc) -> bool {
         if let Some(&idx) = self.hash_to_index.get(&hash) {
-            // Update existing
+            // Update existing - refresh last_seen time
             self.destinations[idx].last_seen = Instant::now();
             false
-        } else if self.destinations.len() >= MAX_KNOWN_DESTINATIONS {
-            // Cache full - ignore new destinations to prevent memory exhaustion
-            false
         } else {
-            // Add new
+            // Need to add new entry
+            if self.destinations.len() >= MAX_KNOWN_DESTINATIONS {
+                // Cache full - evict oldest (LRU)
+                self.evict_oldest();
+            }
+
+            // Add new entry
             let idx = self.destinations.len();
             self.destinations
                 .push(KnownDestination::new(hash, descriptor));
@@ -142,6 +146,49 @@ impl ChatState {
             );
             true
         }
+    }
+
+    /// Evict the least recently seen destination using swap-remove.
+    ///
+    /// Note: Finding the oldest entry is O(n) where n = destination count.
+    /// This is acceptable for MAX_KNOWN_DESTINATIONS=100 on ESP32 (<1μs at 240MHz).
+    /// A doubly-linked list would give O(1) but adds complexity. Consider if
+    /// the limit increases significantly.
+    ///
+    /// The swap-remove maintains O(1) for the actual removal by swapping the
+    /// oldest entry with the last, then popping from the end.
+    fn evict_oldest(&mut self) {
+        if self.destinations.is_empty() {
+            return;
+        }
+
+        // Find index of oldest entry (minimum last_seen)
+        let oldest_idx = self
+            .destinations
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, d)| d.last_seen)
+            .map(|(i, _)| i)
+            .unwrap();
+
+        let oldest_hash = self.destinations[oldest_idx].hash;
+        let last_idx = self.destinations.len() - 1;
+
+        if oldest_idx != last_idx {
+            // Swap oldest with last, update the moved entry's index
+            let last_hash = self.destinations[last_idx].hash;
+            self.destinations.swap(oldest_idx, last_idx);
+            self.hash_to_index.insert(last_hash, oldest_idx);
+        }
+
+        // Remove the last entry (which now contains the oldest data)
+        self.destinations.pop();
+        self.hash_to_index.remove(&oldest_hash);
+
+        info!(
+            "[chat] Evicted oldest destination: {}",
+            format_hash_short(&oldest_hash)
+        );
     }
 
     /// Get a destination by index or hash prefix.

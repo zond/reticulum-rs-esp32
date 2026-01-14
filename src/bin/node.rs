@@ -18,8 +18,8 @@
 //! - Stats: http://localhost:8080/stats
 
 use log::{debug, error, info, warn};
-use reticulum::destination::link::{Link, LinkEvent};
-use reticulum::destination::DestinationName;
+use reticulum::destination::link::{Link, LinkEvent, LinkStatus};
+use reticulum::destination::{DestinationDesc, DestinationName};
 use reticulum::hash::AddressHash;
 use reticulum::iface::tcp_client::TcpClient;
 use reticulum::transport::{Transport, TransportConfig};
@@ -39,7 +39,9 @@ const TESTNET_SERVER: &str = "dublin.connect.reticulum.network:4965";
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 
 /// Maximum concurrent links to prevent memory exhaustion.
-/// Each Link holds crypto state and buffers, so limit concurrent connections.
+/// Each Link holds crypto state (keys, nonces) and buffers. On ESP32 with
+/// 512KB SRAM, 20 links is conservative but safe. Increase cautiously based
+/// on profiling actual memory usage on device.
 const MAX_CONCURRENT_LINKS: usize = 20;
 
 // ESP32: Initialize ESP-IDF before anything else
@@ -246,6 +248,9 @@ async fn main() {
                             }
                             LinkEvent::Closed => {
                                 debug!("Inbound link closed: {:?}", event.id);
+                                // Remove closed link from cache
+                                let mut links_guard = network_links.lock().await;
+                                links_guard.remove(&event.id);
                             }
                         }
                     }
@@ -361,6 +366,42 @@ async fn main() {
     info!("Shutdown complete");
 }
 
+/// Result of attempting to get or create a link.
+enum GetLinkResult {
+    /// Found existing link.
+    Existing(Arc<Mutex<Link>>),
+    /// Created new link.
+    Created(Arc<Mutex<Link>>),
+    /// Concurrent link limit reached.
+    LimitReached,
+}
+
+/// Get an existing link or create a new one.
+///
+/// Returns the link if found or created, or LimitReached if at capacity.
+async fn get_or_create_link(
+    links: &Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>,
+    transport: &Arc<Mutex<Transport>>,
+    hash: AddressHash,
+    descriptor: DestinationDesc,
+) -> GetLinkResult {
+    let mut links_guard = links.lock().await;
+
+    if let Some(link) = links_guard.get(&hash) {
+        return GetLinkResult::Existing(link.clone());
+    }
+
+    if links_guard.len() >= MAX_CONCURRENT_LINKS {
+        return GetLinkResult::LimitReached;
+    }
+
+    // Create new link
+    let t = transport.lock().await;
+    let new_link = t.link(descriptor).await;
+    links_guard.insert(hash, new_link.clone());
+    GetLinkResult::Created(new_link)
+}
+
 /// Handle a parsed chat command.
 async fn handle_command(
     cmd: ChatCommand,
@@ -378,28 +419,39 @@ async fn handle_command(
                 let display_name = dest.display_name.clone();
                 drop(state);
 
-                // Get or create link (with concurrent limit to prevent memory exhaustion)
-                let link = {
-                    let mut links_guard = links.lock().await;
-                    if let Some(link) = links_guard.get(&hash) {
-                        Some(link.clone())
-                    } else if links_guard.len() >= MAX_CONCURRENT_LINKS {
-                        print_chat("Too many active links. Wait for some to close.");
-                        None
-                    } else {
-                        // Create new link
-                        let t = transport.lock().await;
-                        let new_link = t.link(descriptor).await;
-                        links_guard.insert(hash, new_link.clone());
+                // Get or create link
+                let link = match get_or_create_link(links, transport, hash, descriptor).await {
+                    GetLinkResult::Existing(link) => link,
+                    GetLinkResult::Created(link) => {
                         print_chat(&format!("Creating link to {}...", display_name));
-                        Some(new_link)
+                        link
+                    }
+                    GetLinkResult::LimitReached => {
+                        print_chat("Too many active links. Wait for some to close.");
+                        return;
                     }
                 };
 
-                let Some(link) = link else { return };
-
-                // Send message via link
+                // Check link state before sending
                 let link_guard = link.lock().await;
+                let status = link_guard.status();
+
+                if status != LinkStatus::Active {
+                    let status_msg = match status {
+                        LinkStatus::Pending => "pending (awaiting proof)",
+                        LinkStatus::Handshake => "handshake in progress",
+                        LinkStatus::Stale => "stale",
+                        LinkStatus::Closed => "closed",
+                        LinkStatus::Active => unreachable!(),
+                    };
+                    print_chat(&format!(
+                        "Link to {} is {}, try again shortly",
+                        display_name, status_msg
+                    ));
+                    return;
+                }
+
+                // Send message via active link
                 match link_guard.data_packet(text.as_bytes()) {
                     Ok(packet) => {
                         drop(link_guard);
@@ -409,7 +461,7 @@ async fn handle_command(
                         print_chat(&format!("Sent to {}", display_name));
                     }
                     Err(e) => {
-                        print_chat(&format!("Error: Link not ready ({:?})", e));
+                        print_chat(&format!("Error creating packet: {:?}", e));
                     }
                 }
             } else {
@@ -431,25 +483,23 @@ async fn handle_command(
             let mut sent = 0;
             let mut skipped = 0;
             for dest in destinations {
-                // Get or create link (with concurrent limit to prevent memory exhaustion)
-                let link = {
-                    let mut links_guard = links.lock().await;
-                    if let Some(link) = links_guard.get(&dest.hash) {
-                        Some(link.clone())
-                    } else if links_guard.len() >= MAX_CONCURRENT_LINKS {
-                        skipped += 1;
-                        None
-                    } else {
-                        let t = transport.lock().await;
-                        let new_link = t.link(dest.descriptor).await;
-                        links_guard.insert(dest.hash, new_link.clone());
-                        Some(new_link)
-                    }
-                };
+                // Get or create link
+                let link =
+                    match get_or_create_link(links, transport, dest.hash, dest.descriptor).await {
+                        GetLinkResult::Existing(link) | GetLinkResult::Created(link) => link,
+                        GetLinkResult::LimitReached => {
+                            skipped += 1;
+                            continue;
+                        }
+                    };
 
-                let Some(link) = link else { continue };
-
+                // Only send on active links
                 let link_guard = link.lock().await;
+                if link_guard.status() != LinkStatus::Active {
+                    skipped += 1;
+                    continue;
+                }
+
                 if let Ok(packet) = link_guard.data_packet(text.as_bytes()) {
                     drop(link_guard);
                     let t = transport.lock().await;
@@ -461,7 +511,7 @@ async fn handle_command(
 
             if skipped > 0 {
                 print_chat(&format!(
-                    "Broadcast sent to {} destination(s), {} skipped (link limit)",
+                    "Broadcast sent to {} destination(s), {} skipped (not ready or limit)",
                     sent, skipped
                 ));
             } else {

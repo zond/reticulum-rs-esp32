@@ -95,12 +95,20 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 
 3. **Linear search for hash prefix** - `get_destination()` does O(n) search when matching by hash prefix. With MAX_KNOWN_DESTINATIONS=100, this is acceptable but could be improved with a trie.
 
-### Potential Improvements
+### Completed Improvements
+
+| Improvement | Description |
+|-------------|-------------|
+| LRU cache eviction | Evicts oldest when destination cache is full |
+| Link state checking | Check if link is activated before sending |
+| Extract link helper | DRY "get or create link" pattern |
+| Inbound link cleanup | Remove closed inbound links from cache |
+
+### Remaining Improvements
 
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
-| LRU cache eviction | When destination cache is full, evict oldest instead of ignoring new | Medium |
-| Link state checking | Check if link is activated before attempting to send | Medium |
 | Message queueing | Queue messages for pending links, send on activation | Low |
+| Batch broadcast sends | Create all packets then send in single lock hold | Low |
+| O(1) LRU eviction | Replace O(n) scan with doubly-linked list | Low |
 | Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |
-| Extract link helper | DRY up "get or create link" pattern | Low |
