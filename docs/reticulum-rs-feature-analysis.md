@@ -10,13 +10,14 @@ Comprehensive comparison of Reticulum-rs against the reference Python implementa
 
 | Feature | Status | Impact | Scope |
 |---------|--------|--------|-------|
-| LoRa Interface (SX1262) | Missing | **BLOCKER** | This project |
+| LoRa Interface (SX1262) | **COMPLETE** | ~~BLOCKER~~ | This project |
 | BLE Mesh Interface | Missing | **BLOCKER** | This project |
 | Identity Persistence | **COMPLETE** | ~~HIGH~~ | This project |
 | Bandwidth/Airtime Limiting | **COMPLETE** | ~~HIGH~~ | This project |
 | BLE Fragmentation Layer | **COMPLETE** | - | This project |
 | WiFi Config (BLE GATT) | **COMPLETE** | - | This project |
-| HTTP Stats Endpoint | Missing | MEDIUM | This project |
+| HTTP Stats Endpoint | **COMPLETE** | ~~MEDIUM~~ | This project |
+| Serial Chat Interface | **COMPLETE** | - | This project |
 
 ### Out of Scope (Endpoint Features)
 
@@ -308,25 +309,28 @@ Reticulum-rs provides a solid foundation for a transport node:
 | Component | Lines | Status |
 |-----------|-------|--------|
 | Identity persistence (`src/persistence.rs`) | ~100 | **DONE** |
+| LoRa radio driver (`src/lora/radio.rs`) | ~720 | **DONE** |
+| LoRa interface adapter (`src/lora/iface.rs`) | ~240 | **DONE** |
 | Airtime calculation (`src/lora/airtime.rs`) | ~385 | **DONE** |
 | Duty cycle limiter (`src/lora/duty_cycle.rs`) | ~230 | **DONE** |
+| CSMA/CA (`src/lora/csma.rs`) | ~585 | **DONE** |
 | BLE fragmentation (`src/ble/fragmentation.rs`) | ~500 | **DONE** |
-| WiFi config validation (`src/wifi/config.rs`) | ~320 | **DONE** |
-| WiFi BLE service (`src/wifi/ble_service.rs`) | ~80 | **DONE** |
-| WiFi connection (`src/wifi/connection.rs`) | ~70 | **DONE** |
-| WiFi NVS storage (`src/wifi/storage.rs`) | ~50 | **DONE** |
-| TAP testing framework (`src/testing.rs`, `macros/`) | ~450 | **DONE** |
+| WiFi config validation (`src/config/wifi.rs`) | ~320 | **DONE** |
+| WiFi BLE service (`src/config/ble_service.rs`) | ~80 | **DONE** |
+| Announce cache (`src/announce/cache.rs`) | ~540 | **DONE** |
+| Path table (`src/routing/path_table.rs`) | ~750 | **DONE** |
+| Stats HTTP server (`src/network/stats_server.rs`) | ~350 | **DONE** |
+| Serial chat interface (`src/chat.rs`) | ~370 | **DONE** |
+| Testing framework (`macros/`) | ~450 | **DONE** |
 
 ### Remaining Work
 
 | Task | Estimate |
 |------|----------|
-| **LoRa interface (SX1262 driver)** | ~600 lines |
 | **BLE mesh protocol** | ~800 lines |
-| **HTTP stats endpoint** | ~150 lines |
-| **Integration/main.rs wiring** | ~200 lines |
+| **Hardware testing** | N/A |
 
-**Remaining: ~1750 lines of code**
+**Remaining: ~800 lines of code**
 
 Many features (Channels, Resources, Ratcheting, Group Destinations) are **not needed** for a transport node - they're handled by endpoints. This significantly reduces our scope.
 
@@ -334,4 +338,4 @@ The existing reticulum-rs code quality is good, with clear architecture and prop
 
 ---
 
-*Updated 2026-01-12 with implementation progress*
+*Updated 2026-01-14: Updated implementation status (LoRa interface, stats endpoint, chat interface complete)*

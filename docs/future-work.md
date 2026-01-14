@@ -4,13 +4,13 @@ Items planned for future implementation. See also [implementation-guide.md](impl
 
 ## Immediate Priorities
 
-### 1. Integrate LoRa with Transport (Hardware Testing Required)
+### 1. Hardware Testing (LoRa)
 
 ✅ **Interface adapter implemented** - See `src/lora/iface.rs`.
 
 The `LoRaInterface` implements reticulum's Interface trait and bridges the radio with transport channels. Remaining work:
 1. Test on actual ESP32 hardware with LILYGO T3-S3 board
-2. Verify SPI and GPIO pin assignments
+2. Verify SPI and GPIO pin assignments match the board
 3. Validate LoRa TX/RX through the transport layer
 
 ### 2. BLE Mesh Interface (BLOCKER)

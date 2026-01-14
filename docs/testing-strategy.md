@@ -138,17 +138,19 @@ src/
 |--------|-------|-------------|
 | `announce/cache.rs` | 16 | LRU announce cache for deduplication |
 | `ble/fragmentation.rs` | 27 | BLE packet fragmentation/reassembly |
+| `chat.rs` | 10 | Serial chat command parsing |
 | `config/wifi.rs` | 26 | WiFi credential validation |
 | `lora/airtime.rs` | 14 | LoRa time-on-air calculations |
 | `lora/config.rs` | 4 | Region configuration |
 | `lora/csma.rs` | 23 | CSMA/CA collision avoidance |
 | `lora/duty_cycle.rs` | 8 | Token bucket duty cycle limiter |
-| `persistence.rs` | 6 | Identity NVS storage (ESP32 only) |
+| `network/stats_server.rs` | 4 | Stats HTTP endpoint |
+| `network/host.rs` | 3 | Host network provider |
+| `persistence_host.rs` | 2 | Identity file storage |
 | `routing/path_table.rs` | 17 | Routing table for destination paths |
 | `testnet/config.rs` | 4 | Testnet server configuration |
 | `testnet/transport.rs` | 1 | TCP transport (+ 2 ignored network tests) |
-| `wifi/storage.rs` | 6 | WiFi config NVS storage (ESP32 only) |
-| **Total** | **152** | 140 host + 12 ESP32-only |
+| **Total** | **159** | Unit tests (+ 9 doc tests) |
 
 ## Testing Environments
 
@@ -239,4 +241,4 @@ Standard `#[test]` works, but ESP-IDF needs initialization before tests run. The
 
 ---
 
-*Updated 2026-01-13: Clarified testing priority (host first, then QEMU)*
+*Updated 2026-01-14: Updated test counts (159 unit tests + 9 doc tests)*

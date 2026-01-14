@@ -18,8 +18,8 @@ Detailed implementation plans for the ESP32 transport node.
 ## 1. LoRa Interface (SX1262)
 
 **Scope**: This project
-**Estimate**: ~800 lines
-**Priority**: BLOCKER
+**Status**: ✅ COMPLETE (radio driver + transport interface adapter)
+**Lines**: ~950 total
 
 ### Available Crates
 
@@ -722,6 +722,7 @@ pub fn start_stats_server(
 | Component | Lines | Notes |
 |-----------|-------|-------|
 | LoRa Radio Driver | 718 | SX1262 via `sx1262` crate, TX/RX, CSMA/CA integrated |
+| LoRa Interface Adapter | 238 | Bridges radio with reticulum-rs transport |
 | LoRa Duty Cycle | 239 | Token bucket algorithm, microsecond precision |
 | LoRa Airtime Calculator | 400 | Full time-on-air formula |
 | LoRa CSMA/CA | 585 | Exponential backoff, channel sensing |
@@ -731,16 +732,15 @@ pub fn start_stats_server(
 | Announce Cache | 536 | LRU with TTL |
 | Path Table | 746 | Multi-path routing with scoring |
 | Stats HTTP Endpoint | 348 | JSON stats on port 8080 |
+| Serial Chat Interface | 700 | USB serial commands for testing node communication |
 | Testnet TCP Connection | - | Via reticulum-rs TcpClient |
 
 ### Remaining Work
 
 | Task | Priority | Notes |
 |------|----------|-------|
-| **Integrate LoRa with Transport** | BLOCKER | Radio driver exists, needs `InterfaceManager.spawn()` |
 | **BLE Mesh Interface** | BLOCKER | Fragmentation done, need GATT packet interface |
-| **Hardware Testing** | HIGH | Flash to ESP32 and verify |
-| **Periodic Re-announcement** | Medium | Currently announces once at startup |
+| **Hardware Testing** | HIGH | Flash to ESP32 and verify LoRa/WiFi |
 
 ### Architecture
 
@@ -750,7 +750,7 @@ pub fn start_stats_server(
 ├─────────────────────────────────────────────────────────┤
 │  reticulum-rs Transport                                 │
 │  ├── TcpClient (testnet) ✅ integrated                  │
-│  ├── LoRaInterface ⚠️ driver done, not integrated       │
+│  ├── LoRaInterface ✅ driver + adapter done             │
 │  └── BleInterface ⚠️ fragmentation done, not integrated │
 ├─────────────────────────────────────────────────────────┤
 │  Supporting Components (all ✅)                         │
@@ -759,6 +759,7 @@ pub fn start_stats_server(
 │  ├── Duty Cycle Limiter                                 │
 │  ├── CSMA/CA                                            │
 │  ├── Announce Cache                                     │
-│  └── Path Table                                         │
+│  ├── Path Table                                         │
+│  └── Serial Chat Interface                              │
 └─────────────────────────────────────────────────────────┘
 ```
