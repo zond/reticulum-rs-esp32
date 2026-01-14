@@ -10,6 +10,8 @@ pub mod lora;
 pub mod network;
 #[cfg(feature = "esp32")]
 pub mod persistence;
+#[cfg(not(feature = "esp32"))]
+pub mod persistence_host;
 pub mod routing;
 pub mod testnet;
 pub mod wifi;

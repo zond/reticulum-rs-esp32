@@ -40,7 +40,6 @@ esp32 = [
     "dep:esp32-nimble",
     "dep:sx1262",
     "dep:regiface",
-    "dep:rand_core",
 ]
 
 # Region selection (pick one, EU868 is default)
@@ -68,11 +67,12 @@ regiface = { version = "0.2.5", optional = true }
 reticulum = { git = "https://github.com/zond/Reticulum-rs", branch = "esp32-compat", default-features = false, features = ["alloc"] }
 
 # Async runtime - reticulum brings tokio but we need extra features
-tokio = { version = "1.44", features = ["macros", "signal"] }
+# Note: signal feature only works on host, added via target-specific dep below
+tokio = { version = "1.44", features = ["macros"] }
 tokio-util = "0.7"
 
-# Random number generation (for identity creation, only for esp32 target)
-rand_core = { version = "0.6", features = ["getrandom"], optional = true }
+# Random number generation (for identity creation)
+rand_core = { version = "0.6", features = ["getrandom"] }
 
 # Logging
 log = "0.4"
@@ -97,3 +97,7 @@ opt-level = "s"
 [profile.dev]
 debug = true
 opt-level = "z"
+
+# Host-only dependencies (signal handling for Ctrl+C)
+[target.'cfg(not(target_os = "espidf"))'.dependencies]
+tokio = { version = "1.44", features = ["macros", "signal"] }

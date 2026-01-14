@@ -7,6 +7,7 @@
 //! Stats endpoint: http://localhost:8080/stats
 
 use log::{error, info, warn};
+use reticulum::destination::DestinationName;
 use reticulum::iface::tcp_client::TcpClient;
 use reticulum::transport::{Transport, TransportConfig};
 use reticulum_rs_esp32::{NodeStats, StatsServer, DEFAULT_STATS_PORT};
@@ -41,8 +42,24 @@ async fn main() {
     #[cfg(not(feature = "esp32"))]
     info!("Platform: Host");
 
+    // Load or create node identity (persisted across restarts)
+    #[cfg(feature = "esp32")]
+    let identity = {
+        let mut nvs =
+            reticulum_rs_esp32::persistence::init_nvs().expect("Failed to initialize NVS");
+        reticulum_rs_esp32::persistence::load_or_create_identity(&mut nvs)
+            .expect("Failed to load/create identity")
+    };
+
+    #[cfg(not(feature = "esp32"))]
+    let identity = reticulum_rs_esp32::persistence_host::load_or_create_identity()
+        .expect("Failed to load/create identity");
+
+    let identity_hash = identity.address_hash().to_string();
+    info!("Node identity: {}", identity_hash);
+
     // Start stats server (held until end of main for proper cleanup)
-    let stats = Arc::new(NodeStats::new("reticulum-node".to_string()));
+    let stats = Arc::new(NodeStats::new(identity_hash));
     let _stats_server = match StatsServer::start(None, DEFAULT_STATS_PORT, stats.clone()) {
         Ok(server) => {
             info!(
@@ -58,7 +75,7 @@ async fn main() {
     };
 
     // Create reticulum transport
-    let transport = Transport::new(TransportConfig::default());
+    let mut transport = Transport::new(TransportConfig::default());
 
     // Connect to testnet
     info!("Connecting to testnet: {}", TESTNET_SERVER);
@@ -68,7 +85,16 @@ async fn main() {
         .await
         .spawn(TcpClient::new(TESTNET_SERVER), TcpClient::spawn);
 
-    info!("Connected to testnet, listening for announces...");
+    info!("Connected to testnet");
+
+    // Create and register our destination
+    let dest_name = DestinationName::new("reticulum_rs_esp32", "node");
+    let destination = transport.add_destination(identity, dest_name).await;
+
+    // Announce our presence to the network
+    info!("Announcing to network...");
+    transport.send_announce(&destination, None).await;
+    info!("Announce sent, listening for other announces...");
 
     // TODO: Initialize LoRa interface on ESP32
     #[cfg(feature = "esp32")]
