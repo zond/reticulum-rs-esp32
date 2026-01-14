@@ -125,8 +125,8 @@ async fn main() {
                             let hash = &destination.desc.address_hash;
                             info!("Received announce: {:?}", hash);
 
-                            // Update stats - record packet count (size unknown at this level)
-                            stats_clone.testnet.record_rx(1);
+                            // Update stats
+                            stats_clone.testnet.record_rx();
                             stats_clone.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
                         }
                         Err(e) => {

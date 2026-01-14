@@ -8,11 +8,11 @@
 //! ```json
 //! {
 //!   "uptime_secs": 3600,
-//!   "identity_hash": "a1b2c3d4...",
+//!   "identity_hash": "/a1b2c3d4.../",
 //!   "interfaces": {
-//!     "lora": { "tx_packets": 150, "rx_packets": 230 },
-//!     "ble": { "tx_packets": 50, "rx_packets": 45 },
-//!     "testnet": { "tx_packets": 500, "rx_packets": 480 }
+//!     "lora": { "tx": 150, "rx": 230 },
+//!     "ble": { "tx": 50, "rx": 45 },
+//!     "testnet": { "tx": 500, "rx": 480 }
 //!   },
 //!   "routing": {
 //!     "announce_cache_size": 25,
@@ -32,17 +32,13 @@ use tiny_http::{Method, Response, Server};
 /// Default port for the stats server.
 pub const DEFAULT_STATS_PORT: u16 = 8080;
 
-/// Statistics for a single interface.
+/// Statistics for a single interface (packet counts only).
 #[derive(Debug, Default)]
 pub struct InterfaceStats {
     /// Packets transmitted.
-    pub tx_packets: AtomicUsize,
+    pub tx: AtomicUsize,
     /// Packets received.
-    pub rx_packets: AtomicUsize,
-    /// Bytes transmitted.
-    pub tx_bytes: AtomicUsize,
-    /// Bytes received.
-    pub rx_bytes: AtomicUsize,
+    pub rx: AtomicUsize,
 }
 
 impl InterfaceStats {
@@ -52,25 +48,21 @@ impl InterfaceStats {
     }
 
     /// Record a transmitted packet.
-    pub fn record_tx(&self, bytes: usize) {
-        self.tx_packets.fetch_add(1, Ordering::Relaxed);
-        self.tx_bytes.fetch_add(bytes, Ordering::Relaxed);
+    pub fn record_tx(&self) {
+        self.tx.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a received packet.
-    pub fn record_rx(&self, bytes: usize) {
-        self.rx_packets.fetch_add(1, Ordering::Relaxed);
-        self.rx_bytes.fetch_add(bytes, Ordering::Relaxed);
+    pub fn record_rx(&self) {
+        self.rx.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Serialize to JSON fragment (without outer braces of full object).
+    /// Serialize to JSON.
     fn to_json(&self) -> String {
         format!(
-            r#"{{"tx_packets":{},"rx_packets":{},"tx_bytes":{},"rx_bytes":{}}}"#,
-            self.tx_packets.load(Ordering::Relaxed),
-            self.rx_packets.load(Ordering::Relaxed),
-            self.tx_bytes.load(Ordering::Relaxed),
-            self.rx_bytes.load(Ordering::Relaxed)
+            r#"{{"tx":{},"rx":{}}}"#,
+            self.tx.load(Ordering::Relaxed),
+            self.rx.load(Ordering::Relaxed)
         )
     }
 }
@@ -320,20 +312,19 @@ mod tests {
     #[test]
     fn test_interface_stats_new() {
         let stats = InterfaceStats::new();
-        assert_eq!(stats.tx_packets.load(Ordering::Relaxed), 0);
-        assert_eq!(stats.rx_packets.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.tx.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.rx.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn test_interface_stats_record() {
         let stats = InterfaceStats::new();
-        stats.record_tx(100);
-        stats.record_rx(200);
+        stats.record_tx();
+        stats.record_rx();
+        stats.record_rx();
 
-        assert_eq!(stats.tx_packets.load(Ordering::Relaxed), 1);
-        assert_eq!(stats.rx_packets.load(Ordering::Relaxed), 1);
-        assert_eq!(stats.tx_bytes.load(Ordering::Relaxed), 100);
-        assert_eq!(stats.rx_bytes.load(Ordering::Relaxed), 200);
+        assert_eq!(stats.tx.load(Ordering::Relaxed), 1);
+        assert_eq!(stats.rx.load(Ordering::Relaxed), 2);
     }
 
     #[test]
