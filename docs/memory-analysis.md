@@ -102,25 +102,131 @@ At 1% EU duty cycle (36 seconds per hour) with default LoRa settings (SF7, 125 k
 
 Ample budget for a transport node.
 
+## Future Routing Memory Budget
+
+When implementing [scalable-routing-proposal.md](scalable-routing-proposal.md), additional memory will be needed:
+
+| Feature | Flash | RAM | Notes |
+|---------|-------|-----|-------|
+| Gateway announce filtering | ~5 KB | ~1 KB | Simple hash set |
+| DHT routing (Kademlia) | ~30-50 KB | ~20-40 KB | k-buckets, RPCs |
+| Expanded announce cache | ~5 KB | ~10-50 KB | Depends on network size |
+| Path table scaling | ~5 KB | ~10-30 KB | More destinations |
+
+This is why optimization headroom matters.
+
 ## Optimizations (if needed)
 
-### Flash Reduction
-- LTO (Link-Time Optimization): 5-15% savings
-- Remove unused tokio features: 20-30 KB
-- Already using `opt-level = "z"`
+### Rust Compiler Settings (Cargo.toml)
+
+Current `profile.release`:
+```toml
+opt-level = "s"  # Size-optimized
+```
+
+Full size optimization (apply when needed):
+```toml
+[profile.release]
+opt-level = "z"     # Maximum size reduction (currently "s")
+lto = true          # Link-Time Optimization: 5-15% savings
+codegen-units = 1   # Better optimization, slower builds
+strip = true        # Remove symbols (may already be handled by ESP-IDF)
+```
+
+We already use `build-std = ["std", "panic_abort"]` in `.cargo/config.toml` which eliminates unwinding code.
+
+Additional nightly options (if needed):
+```bash
+# Remove location details from panics
+RUSTFLAGS="-Zlocation-detail=none"
+
+# Build std with size optimization
+-Z build-std-features="optimize_for_size"
+```
+
+### ESP-IDF sdkconfig Optimizations
+
+Add to `config/sdkconfig.defaults` when flash gets tight:
+
+**High impact (20-50 KB each):**
+```
+# Use Newlib Nano printf (25-50 KB savings)
+CONFIG_NEWLIB_NANO_FORMAT=y
+
+# Disable IPv6 if not needed (~30 KB)
+CONFIG_LWIP_IPV6=n
+
+# Reduce log level (removes strings)
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+```
+
+**Medium impact (5-20 KB each):**
+```
+# Disable WPA3 if WPA2 sufficient
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n
+
+# Disable soft-AP if not needed
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+
+# Silent assertions (removes strings)
+CONFIG_COMPILER_OPTIMIZATION_ASSERTION_LEVEL=0
+
+# Disable error name lookup table
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+```
+
+**BLE optimizations:**
+```
+# Single BLE connection (we control the protocol)
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BTDM_CTRL_BLE_MAX_CONN=1
+
+# Disable unused roles
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+```
+
+### Reticulum-rs Fork Optimizations
+
+Our fork (`esp32-compat` branch) already disables gRPC. Additional options:
+
+| Change | Savings | Status |
+|--------|---------|--------|
+| Disable gRPC (tonic/prost) | ~50-80 KB | Done |
+| Make `env_logger` optional | ~15 KB | TODO in fork |
+| Make `serde` optional | ~50 KB | Requires refactoring |
+| Reduce tokio features | ~20-30 KB | Investigate |
 
 ### RAM Reduction
+
+- Move large buffers to PSRAM (see PSRAM Strategy above)
 - Reduce packet cache size
-- Use static buffers
-- Lazy initialization
+- Use static buffers where possible
+- Lazy initialization of subsystems
 - Limit concurrent connections
+
+### Analysis Tools
+
+```bash
+# Measure binary size breakdown
+idf.py size
+idf.py size-components
+idf.py size-files
+
+# Rust-specific analysis (run on host build)
+cargo bloat --release        # Find large functions
+cargo llvm-lines             # Generic instantiation bloat
+cargo unused-features        # Find unused feature flags
+```
 
 ## Recommendations
 
-1. **Phase 1** (current): Comfortable fit
+1. **Phase 1** (current): Comfortable fit with 52% flash margin
 2. **Profile on-device** after adding LoRa interface
 3. **Use PSRAM** for large buffers if SRAM pressure appears
-4. **Enable LTO** if binary exceeds 2 MB
+4. **Apply Cargo.toml optimizations** (LTO, codegen-units=1) when approaching 2 MB
+5. **Apply sdkconfig optimizations** based on actual feature needs
+6. **Reserve headroom** for DHT routing (~50 KB flash, ~40 KB RAM)
 
 ## Comparison
 
