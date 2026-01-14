@@ -91,7 +91,7 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 
 1. **Stdin blocking on ESP32** - The stdin reader uses `spawn_blocking` which cannot be cancelled mid-read. On ESP32, the task runs forever if no input arrives. No clean shutdown mechanism exists. (See `src/bin/node.rs:298`)
 
-2. **Link activation delay** - Newly created links need time to complete the handshake before `data_packet()` succeeds. Users may see "Link not ready" errors on first message to a destination. Consider implementing a message queue that sends on activation.
+2. **Link activation delay** - ✅ Fixed: Messages sent to pending links are now queued and automatically sent when the link activates. See `MAX_QUEUED_MESSAGES_PER_DEST` in `src/bin/node.rs`.
 
 3. **Linear search for hash prefix** - `get_destination()` does O(n) search when matching by hash prefix. With MAX_KNOWN_DESTINATIONS=100, this is acceptable but could be improved with a trie.
 
@@ -103,12 +103,13 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 | Link state checking | Check if link is activated before sending |
 | Extract link helper | DRY "get or create link" pattern |
 | Inbound link cleanup | Remove closed inbound links from cache |
+| Message queueing | Queue messages for pending links, send on activation |
 
 ### Remaining Improvements
 
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
-| Message queueing | Queue messages for pending links, send on activation | Low |
+| Queue message TTL | Expire queued messages after timeout (prevent stale messages) | Medium |
 | Batch broadcast sends | Create all packets then send in single lock hold | Low |
 | O(1) LRU eviction | Replace O(n) scan with doubly-linked list | Low |
 | Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |

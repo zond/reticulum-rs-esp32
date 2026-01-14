@@ -16,6 +16,17 @@
 //! ## Endpoints
 //!
 //! - Stats: http://localhost:8080/stats
+//!
+//! ## Lock Ordering
+//!
+//! To prevent deadlocks, locks must be acquired in this order:
+//! 1. `chat_state` - chat state and destination cache
+//! 2. `pending_messages` - queued messages for pending links
+//! 3. `links` - active link cache
+//! 4. `transport` - network transport
+//! 5. Individual `Link` (via `Arc<Mutex<Link>>`)
+//!
+//! Always release locks in reverse order when possible.
 
 use log::{debug, error, info, warn};
 use reticulum::destination::link::{Link, LinkEvent, LinkStatus};
@@ -43,6 +54,11 @@ const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 /// 512KB SRAM, 20 links is conservative but safe. Increase cautiously based
 /// on profiling actual memory usage on device.
 const MAX_CONCURRENT_LINKS: usize = 20;
+
+/// Maximum queued messages per destination to prevent memory exhaustion.
+/// Messages are queued when sent to a link that's still establishing.
+/// Once the link activates, queued messages are sent automatically.
+const MAX_QUEUED_MESSAGES_PER_DEST: usize = 5;
 
 // ESP32: Initialize ESP-IDF before anything else
 #[cfg(feature = "esp32")]
@@ -160,12 +176,17 @@ async fn main() {
     let links: Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    // Queue for messages sent to pending links (sent when link activates)
+    let pending_messages: Arc<Mutex<HashMap<AddressHash, Vec<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     // Spawn network task (announces, incoming messages, link events)
     let network_transport = transport.clone();
     let network_stats = stats.clone();
     let network_cancel = cancel.clone();
     let network_chat = chat_state.clone();
     let network_links = links.clone();
+    let network_pending = pending_messages.clone();
     let network_destination = destination.clone();
 
     let network_task = tokio::spawn(async move {
@@ -262,6 +283,36 @@ async fn main() {
                         match event.event {
                             LinkEvent::Activated => {
                                 debug!("Outbound link activated: {:?}", event.id);
+                                // Flush any queued messages for this destination
+                                let messages = {
+                                    let mut pending = network_pending.lock().await;
+                                    pending.remove(&event.id).unwrap_or_default()
+                                };
+                                if !messages.is_empty() {
+                                    // Get the link and send queued messages
+                                    let link = {
+                                        let links_guard = network_links.lock().await;
+                                        links_guard.get(&event.id).cloned()
+                                    };
+                                    if let Some(link) = link {
+                                        let mut sent = 0;
+                                        for msg in &messages {
+                                            let link_guard = link.lock().await;
+                                            if let Ok(packet) = link_guard.data_packet(msg.as_bytes()) {
+                                                drop(link_guard);
+                                                let t = network_transport.lock().await;
+                                                t.send_packet(packet).await;
+                                                network_stats.testnet.record_tx();
+                                                sent += 1;
+                                            }
+                                        }
+                                        print_chat(&format!(
+                                            "Link ready, sent {} queued message(s)",
+                                            sent
+                                        ));
+                                        print_prompt();
+                                    }
+                                }
                             }
                             LinkEvent::Data(payload) => {
                                 // Response on outbound link
@@ -277,6 +328,17 @@ async fn main() {
                                 // Remove closed link from cache
                                 let mut links_guard = network_links.lock().await;
                                 links_guard.remove(&event.id);
+                                // Drop any pending messages (link failed before activating)
+                                let mut pending = network_pending.lock().await;
+                                if let Some(dropped) = pending.remove(&event.id) {
+                                    if !dropped.is_empty() {
+                                        print_chat(&format!(
+                                            "Link closed, {} queued message(s) dropped",
+                                            dropped.len()
+                                        ));
+                                        print_prompt();
+                                    }
+                                }
                             }
                         }
                     }
@@ -298,6 +360,7 @@ async fn main() {
     let stdin_chat = chat_state.clone();
     let stdin_stats = stats.clone();
     let stdin_links = links.clone();
+    let stdin_pending = pending_messages.clone();
     let stdin_cancel = cancel.clone();
 
     let stdin_task = tokio::task::spawn_blocking(move || {
@@ -318,6 +381,7 @@ async fn main() {
                         &stdin_chat,
                         &stdin_stats,
                         &stdin_links,
+                        &stdin_pending,
                     )
                     .await;
                 });
@@ -409,6 +473,7 @@ async fn handle_command(
     chat_state: &Arc<Mutex<ChatState>>,
     stats: &Arc<NodeStats>,
     links: &Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>,
+    pending_messages: &Arc<Mutex<HashMap<AddressHash, Vec<String>>>>,
 ) {
     match cmd {
         ChatCommand::Message { dest_id, text } => {
@@ -432,26 +497,51 @@ async fn handle_command(
                     }
                 };
 
-                // Check link state before sending
+                // Check link state and queue atomically to prevent TOCTOU race.
+                // If we check status, release lock, then queue, the link could activate
+                // in between and our queued message would never be sent.
+                let mut pending = pending_messages.lock().await;
                 let link_guard = link.lock().await;
                 let status = link_guard.status();
 
                 if status != LinkStatus::Active {
-                    let status_msg = match status {
-                        LinkStatus::Pending => "pending (awaiting proof)",
-                        LinkStatus::Handshake => "handshake in progress",
-                        LinkStatus::Stale => "stale",
-                        LinkStatus::Closed => "closed",
-                        LinkStatus::Active => unreachable!(),
-                    };
+                    drop(link_guard);
+                    // Queue message for when link activates
+                    if status == LinkStatus::Stale || status == LinkStatus::Closed {
+                        drop(pending);
+                        let status_str = if status == LinkStatus::Stale {
+                            "stale"
+                        } else {
+                            "closed"
+                        };
+                        print_chat(&format!(
+                            "Link to {} is {}, cannot queue message",
+                            display_name, status_str
+                        ));
+                        return;
+                    }
+
+                    // Queue for Pending or Handshake states
+                    let queue = pending.entry(hash).or_default();
+                    if queue.len() >= MAX_QUEUED_MESSAGES_PER_DEST {
+                        print_chat(&format!(
+                            "Queue full for {} ({} messages), try again shortly",
+                            display_name, MAX_QUEUED_MESSAGES_PER_DEST
+                        ));
+                        return;
+                    }
+                    queue.push(text);
+                    let queue_len = queue.len();
+                    drop(pending);
                     print_chat(&format!(
-                        "Link to {} is {}, try again shortly",
-                        display_name, status_msg
+                        "Link establishing, message queued ({} pending)",
+                        queue_len
                     ));
                     return;
                 }
+                drop(pending);
 
-                // Send message via active link
+                // Send message via active link (link_guard still held)
                 match link_guard.data_packet(text.as_bytes()) {
                     Ok(packet) => {
                         drop(link_guard);
