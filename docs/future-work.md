@@ -113,3 +113,65 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 | Batch broadcast sends | Create all packets then send in single lock hold | Low |
 | O(1) LRU eviction | Replace O(n) scan with doubly-linked list | Low |
 | Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |
+
+---
+
+## Code Quality Improvements
+
+Quality issues identified during code review. Grouped by priority.
+
+### High Priority
+
+| Issue | Location | Description |
+|-------|----------|-------------|
+| Extract network task | `src/bin/node.rs` | Move 260-line network task (lines 175-343) into separate `spawn_network_task()` function |
+| Refactor lock management | `src/bin/node.rs` | Extract helper struct for atomic pending_messages + links operations. Replace 45-line manual lock juggling with single function |
+| Add tests for binary logic | `src/bin/node.rs` | Critical paths (lock ordering, queue TTL, link state machine) have no tests. Extract testable functions into library module |
+
+### Medium Priority
+
+| Issue | Location | Description |
+|-------|----------|-------------|
+| Complete chat state tests | `src/chat.rs:410-418` | Tests cannot construct valid AddressHash/DestinationDesc. Add fixtures and test eviction logic |
+| Consolidate print pattern | `src/bin/node.rs` | Extract `print_chat_with_prompt()` helper (used 14+ times) |
+| Fix fragile hash formatting | `src/chat.rs:50-56` | Uses `format!("{:?}", hash)` which depends on Debug impl. Add proper hex helper |
+| Consistent lock variable names | `src/bin/node.rs` | Use consistent naming: `transport_lock`, `links_cache_guard`, etc. |
+
+### Low Priority
+
+| Issue | Location | Description |
+|-------|----------|-------------|
+| Document magic numbers rationale | `src/bin/node.rs:53-72` | Add comments explaining why each constant was chosen |
+| Merge link event handlers | `src/bin/node.rs:240-340` | Inbound/outbound handlers have structural overlap |
+
+---
+
+## Documentation Improvements
+
+Issues identified during documentation review.
+
+### High Priority
+
+All high priority documentation issues have been addressed:
+- ✅ Skill references in CLAUDE.md made conditional
+- ✅ Test count verified (159 is correct)
+- ✅ Risk table in research-findings.md updated
+
+### Medium Priority
+
+| Issue | Location | Description |
+|-------|----------|-------------|
+| Consolidate testing docs | README, CLAUDE.md, testing-strategy.md, qemu-setup.md | Same test commands repeated 4 places. Keep summary in README, details in testing-strategy.md |
+| Add memory constraints to README | `README.md` | 512KB SRAM constraint not mentioned. Add section with link to memory-analysis.md |
+| Create status dashboard | New: `docs/STATUS.md` | No single view of completion %. Create checklist with links |
+| Restructure dense section | `docs/implementation-guide.md:520-585` | Section 5 is 65 lines of mixed content. Add checklist summary |
+
+### Low Priority
+
+| Issue | Location | Description |
+|-------|----------|-------------|
+| Add architecture diagram to README | `README.md` | Best diagram is buried in implementation-guide.md:745-765 |
+| Create troubleshooting guide | New: `docs/troubleshooting.md` | No docs for common problems (QEMU boot, WiFi, LoRa) |
+| Standardize cross-references | All docs | Mix of relative paths, full paths, bare URLs |
+| Standardize timestamps | All docs | "*Updated YYYY-MM-DD*" format inconsistent, meaning unclear |
+| Add context to code examples | `docs/implementation-guide.md` | Large code blocks (30-50 lines) lack explanation |

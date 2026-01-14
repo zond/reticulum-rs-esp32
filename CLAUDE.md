@@ -23,11 +23,9 @@ README.md and CLAUDE.md should refer to docs/* files when useful.
 2. Format code: `cargo fmt`
 3. Ensure README.md and CLAUDE.md are up to date
 4. Check if any files in the docs directory need update
-5. Review with the code-simplifier:code-simplifier agent
-6. Review with the rust-code-guardian agent
-7. If the code-simplifier:code-simplifier or rust-code-guardian identifies reasonable
-   things to fix in the future, please add to a docs file or TODO
-   comments.
+5. If available, review with code review agents (code-simplifier, rust-code-guardian)
+6. Fix any high priority issues identified by code review before committing
+7. Add low/medium priority improvements to docs/future-work.md or TODO comments
 
 ### Commit Standards
 

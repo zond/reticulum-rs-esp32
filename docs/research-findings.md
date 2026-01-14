@@ -205,8 +205,8 @@ This is implemented in [PR #55](https://github.com/BeechatNetworkSystemsLtd/Reti
 |------|----------|--------|
 | reticulum-rs won't compile for ESP32 | High | **RESOLVED** - Compiles with forked patches |
 | tonic dependency too heavy | Medium | **RESOLVED** - Now optional via `grpc` feature |
-| Memory exhaustion | Medium | Pending - Need to profile on device |
-| BLE mesh complexity | Medium | Pending - Start with LoRa+WiFi, add BLE later |
+| Memory exhaustion | Medium | **MITIGATED** - See [memory-analysis.md](memory-analysis.md), limits in place (MAX_CONCURRENT_LINKS, MAX_QUEUED_MESSAGES_PER_DEST) |
+| BLE mesh complexity | Medium | **IN PROGRESS** - BLE fragmentation complete, mesh interface pending. See [future-work.md](future-work.md) |
 | tokio rt-multi-thread required | High | **RESOLVED** - Not required |
 
 ## Progress
