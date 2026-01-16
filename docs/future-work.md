@@ -122,18 +122,16 @@ Quality issues identified during code review. Grouped by priority.
 
 ### High Priority
 
-| Issue | Location | Description |
-|-------|----------|-------------|
-| Extract network task | `src/bin/node.rs` | Move 260-line network task (lines 175-343) into separate `spawn_network_task()` function |
-| Refactor lock management | `src/bin/node.rs` | Extract helper struct for atomic pending_messages + links operations. Replace 45-line manual lock juggling with single function |
-| Add tests for binary logic | `src/bin/node.rs` | Critical paths (lock ordering, queue TTL, link state machine) have no tests. Extract testable functions into library module |
+All high priority code quality issues have been addressed:
+- ✅ Network task extracted to `spawn_network_task()` function
+- ✅ Lock ordering violation fixed in `LinkEvent::Closed` handler
+- ✅ Queue TTL logic extracted to `src/message_queue.rs` with 7 tests
 
 ### Medium Priority
 
 | Issue | Location | Description |
 |-------|----------|-------------|
 | Complete chat state tests | `src/chat.rs:410-418` | Tests cannot construct valid AddressHash/DestinationDesc. Add fixtures and test eviction logic |
-| Consolidate print pattern | `src/bin/node.rs` | Extract `print_chat_with_prompt()` helper (used 14+ times) |
 | Fix fragile hash formatting | `src/chat.rs:50-56` | Uses `format!("{:?}", hash)` which depends on Debug impl. Add proper hex helper |
 | Consistent lock variable names | `src/bin/node.rs` | Use consistent naming: `transport_lock`, `links_cache_guard`, etc. |
 
@@ -143,6 +141,10 @@ Quality issues identified during code review. Grouped by priority.
 |-------|----------|-------------|
 | Document magic numbers rationale | `src/bin/node.rs:53-72` | Add comments explaining why each constant was chosen |
 | Merge link event handlers | `src/bin/node.rs:240-340` | Inbound/outbound handlers have structural overlap |
+| Add queue metrics to NodeStats | `src/bin/node.rs` | Track queue_size, expired_messages for ESP32 memory monitoring |
+| Remove unused `is_expired_after` | `src/message_queue.rs` | Method only used in tests, consider removing or documenting |
+| Add TTL boundary tests | `src/message_queue.rs` | Test exact TTL boundary (at TTL vs just past TTL) |
+| Clarify lock ordering docs | `src/bin/node.rs:20-29` | Explain partial order and when to acquire multiple locks |
 
 ---
 
@@ -154,7 +156,7 @@ Issues identified during documentation review.
 
 All high priority documentation issues have been addressed:
 - ✅ Skill references in CLAUDE.md made conditional
-- ✅ Test count verified (159 is correct)
+- ✅ Test count verified (166 after message_queue module added)
 - ✅ Risk table in research-findings.md updated
 
 ### Medium Priority

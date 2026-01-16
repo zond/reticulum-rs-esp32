@@ -30,22 +30,26 @@
 
 use log::{debug, error, info, warn};
 use reticulum::destination::link::{Link, LinkEvent, LinkStatus};
-use reticulum::destination::{DestinationDesc, DestinationName};
+use reticulum::destination::{DestinationDesc, DestinationName, SingleInputDestination};
 use reticulum::hash::AddressHash;
 use reticulum::iface::tcp_client::TcpClient;
 use reticulum::transport::{Transport, TransportConfig};
 use reticulum_rs_esp32::chat::{self, ChatCommand, ChatState};
+use reticulum_rs_esp32::message_queue::{QueuedMessage, MAX_QUEUED_MESSAGES_PER_DEST};
 use reticulum_rs_esp32::{NodeStats, StatsServer, DEFAULT_STATS_PORT};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 /// Type alias for the shared link cache to avoid clippy complexity warnings.
 type LinkCache = Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>;
+
+/// Type alias for pending message queues per destination.
+type PendingMessages = Arc<Mutex<HashMap<AddressHash, Vec<QueuedMessage>>>>;
 
 const TESTNET_SERVER: &str = "dublin.connect.reticulum.network:4965";
 
@@ -58,41 +62,8 @@ const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 /// on profiling actual memory usage on device.
 const MAX_CONCURRENT_LINKS: usize = 20;
 
-/// Maximum queued messages per destination to prevent memory exhaustion.
-/// Messages are queued when sent to a link that's still establishing.
-/// Once the link activates, queued messages are sent automatically.
-const MAX_QUEUED_MESSAGES_PER_DEST: usize = 5;
-
-/// Time-to-live for queued messages. Messages older than this are dropped
-/// to prevent stale messages from being sent if a link takes too long to
-/// establish or never activates.
-const QUEUE_MESSAGE_TTL: Duration = Duration::from_secs(60);
-
 /// How often to check for and remove expired queued messages.
 const QUEUE_CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
-
-/// A message queued for a pending link.
-#[derive(Clone)]
-struct QueuedMessage {
-    /// The message text.
-    text: String,
-    /// When the message was queued.
-    queued_at: Instant,
-}
-
-impl QueuedMessage {
-    fn new(text: String) -> Self {
-        Self {
-            text,
-            queued_at: Instant::now(),
-        }
-    }
-
-    /// Returns true if this message has expired.
-    fn is_expired(&self) -> bool {
-        self.queued_at.elapsed() > QUEUE_MESSAGE_TTL
-    }
-}
 
 // ESP32: Initialize ESP-IDF before anything else
 #[cfg(feature = "esp32")]
@@ -118,6 +89,229 @@ fn print_chat(msg: &str) {
 fn print_prompt() {
     print!("> ");
     let _ = std::io::stdout().flush();
+}
+
+/// Print a message followed by the prompt (common pattern for async responses).
+fn print_chat_with_prompt(msg: &str) {
+    print_chat(msg);
+    print_prompt();
+}
+
+/// Spawn the network task that handles announces, link events, and message queuing.
+///
+/// Returns a JoinHandle for the spawned task.
+fn spawn_network_task(
+    transport: Arc<Mutex<Transport>>,
+    stats: Arc<NodeStats>,
+    cancel: CancellationToken,
+    chat_state: Arc<Mutex<ChatState>>,
+    links: LinkCache,
+    pending_messages: PendingMessages,
+    destination: Arc<Mutex<SingleInputDestination>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        // Get all channel receivers in a single lock acquisition
+        let (mut announces, mut in_link_events, mut out_link_events) = {
+            let t = transport.lock().await;
+            (
+                t.recv_announces().await,
+                t.in_link_events(),
+                t.out_link_events(),
+            )
+        };
+
+        let mut announce_timer = tokio::time::interval(ANNOUNCE_INTERVAL);
+        announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        announce_timer.tick().await; // Skip first
+
+        let mut queue_cleanup_timer = tokio::time::interval(QUEUE_CLEANUP_INTERVAL);
+        queue_cleanup_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        queue_cleanup_timer.tick().await; // Skip first
+
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("Network task shutting down");
+                    break;
+                }
+
+                // Periodic re-announcement
+                _ = announce_timer.tick() => {
+                    debug!("Sending periodic announce...");
+                    let t = transport.lock().await;
+                    t.send_announce(&destination, None).await;
+                    stats.testnet.record_tx();
+                }
+
+                // Periodic cleanup of expired queued messages
+                _ = queue_cleanup_timer.tick() => {
+                    let mut pending = pending_messages.lock().await;
+                    let mut total_expired = 0;
+
+                    // Remove expired messages from each queue
+                    pending.retain(|_hash, messages| {
+                        let before = messages.len();
+                        messages.retain(|m| !m.is_expired());
+                        total_expired += before - messages.len();
+                        !messages.is_empty() // Remove entry if queue is now empty
+                    });
+
+                    if total_expired > 0 {
+                        debug!("Expired {} stale queued message(s)", total_expired);
+                    }
+                }
+
+                // Handle incoming announces
+                result = announces.recv() => {
+                    match result {
+                        Ok(announce) => {
+                            let dest = announce.destination.lock().await;
+                            let hash = dest.desc.address_hash;
+                            let desc = dest.desc;
+                            drop(dest); // Release lock
+
+                            debug!("Received announce: {:?}", hash);
+                            stats.testnet.record_rx();
+
+                            // Add to chat state (only increment cache size if actually added)
+                            let added = {
+                                let mut state = chat_state.lock().await;
+                                state.add_destination(hash, desc)
+                            };
+                            if added {
+                                stats.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Announce channel error: {}", e);
+                        }
+                    }
+                }
+
+                // Handle incoming link data
+                result = in_link_events.recv() => {
+                    if let Ok(event) = result {
+                        match event.event {
+                            LinkEvent::Activated => {
+                                debug!("Inbound link activated: {:?}", event.id);
+                            }
+                            LinkEvent::Data(payload) => {
+                                // Display incoming message
+                                let msg = chat::format_incoming_message(
+                                    &event.id,
+                                    payload.as_slice()
+                                );
+                                print_chat_with_prompt(&msg);
+                            }
+                            LinkEvent::Closed => {
+                                debug!("Inbound link closed: {:?}", event.id);
+                                // Remove closed link from cache
+                                let mut links_guard = links.lock().await;
+                                links_guard.remove(&event.id);
+                            }
+                        }
+                    }
+                }
+
+                // Handle outgoing link events
+                result = out_link_events.recv() => {
+                    if let Ok(event) = result {
+                        match event.event {
+                            LinkEvent::Activated => {
+                                debug!("Outbound link activated: {:?}", event.id);
+                                // Flush any queued messages for this destination
+                                let messages = {
+                                    let mut pending = pending_messages.lock().await;
+                                    pending.remove(&event.id).unwrap_or_default()
+                                };
+
+                                if messages.is_empty() {
+                                    continue;
+                                }
+
+                                // Filter out expired messages
+                                let (valid, expired): (Vec<_>, Vec<_>) =
+                                    messages.into_iter().partition(|m| !m.is_expired());
+
+                                if !expired.is_empty() {
+                                    debug!(
+                                        "Dropped {} expired message(s) for {:?}",
+                                        expired.len(),
+                                        event.id
+                                    );
+                                }
+
+                                if valid.is_empty() {
+                                    continue;
+                                }
+
+                                // Get the link for sending
+                                let link = {
+                                    let links_guard = links.lock().await;
+                                    links_guard.get(&event.id).cloned()
+                                };
+                                let Some(link) = link else { continue };
+
+                                // Send queued messages, checking link status before each send
+                                // to handle the case where link closes during processing
+                                let mut sent = 0;
+                                for msg in &valid {
+                                    let link_guard = link.lock().await;
+                                    if link_guard.status() != LinkStatus::Active {
+                                        debug!("Link closed while sending queued messages");
+                                        break;
+                                    }
+                                    if let Ok(packet) =
+                                        link_guard.data_packet(msg.text().as_bytes())
+                                    {
+                                        drop(link_guard);
+                                        let t = transport.lock().await;
+                                        t.send_packet(packet).await;
+                                        stats.testnet.record_tx();
+                                        sent += 1;
+                                    }
+                                }
+
+                                if sent > 0 {
+                                    print_chat_with_prompt(&format!(
+                                        "Link ready, sent {} queued message(s)",
+                                        sent
+                                    ));
+                                }
+                            }
+                            LinkEvent::Data(payload) => {
+                                // Response on outbound link
+                                let msg = chat::format_incoming_message(
+                                    &event.id,
+                                    payload.as_slice()
+                                );
+                                print_chat_with_prompt(&msg);
+                            }
+                            LinkEvent::Closed => {
+                                debug!("Outbound link closed: {:?}", event.id);
+                                // Drop pending messages first (per lock ordering: pending_messages before links)
+                                let mut pending = pending_messages.lock().await;
+                                let dropped_count = pending.remove(&event.id).map_or(0, |d| d.len());
+                                drop(pending);
+
+                                // Then remove closed link from cache
+                                let mut links_guard = links.lock().await;
+                                links_guard.remove(&event.id);
+                                drop(links_guard);
+
+                                if dropped_count > 0 {
+                                    print_chat_with_prompt(&format!(
+                                        "Link closed, {} queued message(s) dropped",
+                                        dropped_count
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -210,213 +404,18 @@ async fn main() {
     let links: LinkCache = Arc::new(Mutex::new(HashMap::new()));
 
     // Queue for messages sent to pending links (sent when link activates)
-    let pending_messages: Arc<Mutex<HashMap<AddressHash, Vec<QueuedMessage>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let pending_messages: PendingMessages = Arc::new(Mutex::new(HashMap::new()));
 
     // Spawn network task (announces, incoming messages, link events)
-    let network_transport = transport.clone();
-    let network_stats = stats.clone();
-    let network_cancel = cancel.clone();
-    let network_chat = chat_state.clone();
-    let network_links = links.clone();
-    let network_pending = pending_messages.clone();
-    let network_destination = destination.clone();
-
-    let network_task = tokio::spawn(async move {
-        let mut announces = {
-            let t = network_transport.lock().await;
-            t.recv_announces().await
-        };
-
-        let mut in_link_events = {
-            let t = network_transport.lock().await;
-            t.in_link_events()
-        };
-
-        let mut out_link_events = {
-            let t = network_transport.lock().await;
-            t.out_link_events()
-        };
-
-        let mut announce_timer = tokio::time::interval(ANNOUNCE_INTERVAL);
-        announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        announce_timer.tick().await; // Skip first
-
-        let mut queue_cleanup_timer = tokio::time::interval(QUEUE_CLEANUP_INTERVAL);
-        queue_cleanup_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        queue_cleanup_timer.tick().await; // Skip first
-
-        loop {
-            tokio::select! {
-                _ = network_cancel.cancelled() => {
-                    info!("Network task shutting down");
-                    break;
-                }
-
-                // Periodic re-announcement
-                _ = announce_timer.tick() => {
-                    debug!("Sending periodic announce...");
-                    let t = network_transport.lock().await;
-                    t.send_announce(&network_destination, None).await;
-                    network_stats.testnet.record_tx();
-                }
-
-                // Periodic cleanup of expired queued messages
-                _ = queue_cleanup_timer.tick() => {
-                    let mut pending = network_pending.lock().await;
-                    let mut total_expired = 0;
-
-                    // Remove expired messages from each queue
-                    pending.retain(|_hash, messages| {
-                        let before = messages.len();
-                        messages.retain(|m| !m.is_expired());
-                        total_expired += before - messages.len();
-                        !messages.is_empty() // Remove entry if queue is now empty
-                    });
-
-                    if total_expired > 0 {
-                        debug!("Expired {} stale queued message(s)", total_expired);
-                    }
-                }
-
-                // Handle incoming announces
-                result = announces.recv() => {
-                    match result {
-                        Ok(announce) => {
-                            let dest = announce.destination.lock().await;
-                            let hash = dest.desc.address_hash;
-                            let desc = dest.desc;
-                            drop(dest); // Release lock
-
-                            debug!("Received announce: {:?}", hash);
-                            network_stats.testnet.record_rx();
-
-                            // Add to chat state (only increment cache size if actually added)
-                            let added = {
-                                let mut state = network_chat.lock().await;
-                                state.add_destination(hash, desc)
-                            };
-                            if added {
-                                network_stats.routing.announce_cache_size.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Announce channel error: {}", e);
-                        }
-                    }
-                }
-
-                // Handle incoming link data
-                result = in_link_events.recv() => {
-                    if let Ok(event) = result {
-                        match event.event {
-                            LinkEvent::Activated => {
-                                debug!("Inbound link activated: {:?}", event.id);
-                            }
-                            LinkEvent::Data(payload) => {
-                                // Display incoming message
-                                let msg = chat::format_incoming_message(
-                                    &event.id,
-                                    payload.as_slice()
-                                );
-                                print_chat(&msg);
-                                print_prompt();
-                            }
-                            LinkEvent::Closed => {
-                                debug!("Inbound link closed: {:?}", event.id);
-                                // Remove closed link from cache
-                                let mut links_guard = network_links.lock().await;
-                                links_guard.remove(&event.id);
-                            }
-                        }
-                    }
-                }
-
-                // Handle outgoing link events
-                result = out_link_events.recv() => {
-                    if let Ok(event) = result {
-                        match event.event {
-                            LinkEvent::Activated => {
-                                debug!("Outbound link activated: {:?}", event.id);
-                                // Flush any queued messages for this destination
-                                let messages = {
-                                    let mut pending = network_pending.lock().await;
-                                    pending.remove(&event.id).unwrap_or_default()
-                                };
-                                if !messages.is_empty() {
-                                    // Filter out expired messages
-                                    let (valid, expired): (Vec<_>, Vec<_>) =
-                                        messages.into_iter().partition(|m| !m.is_expired());
-
-                                    if !expired.is_empty() {
-                                        debug!(
-                                            "Dropped {} expired message(s) for {:?}",
-                                            expired.len(),
-                                            event.id
-                                        );
-                                    }
-
-                                    if !valid.is_empty() {
-                                        // Get the link and send queued messages
-                                        let link = {
-                                            let links_guard = network_links.lock().await;
-                                            links_guard.get(&event.id).cloned()
-                                        };
-                                        if let Some(link) = link {
-                                            let mut sent = 0;
-                                            for msg in &valid {
-                                                let link_guard = link.lock().await;
-                                                if let Ok(packet) =
-                                                    link_guard.data_packet(msg.text.as_bytes())
-                                                {
-                                                    drop(link_guard);
-                                                    let t = network_transport.lock().await;
-                                                    t.send_packet(packet).await;
-                                                    network_stats.testnet.record_tx();
-                                                    sent += 1;
-                                                }
-                                            }
-                                            print_chat(&format!(
-                                                "Link ready, sent {} queued message(s)",
-                                                sent
-                                            ));
-                                            print_prompt();
-                                        }
-                                    }
-                                }
-                            }
-                            LinkEvent::Data(payload) => {
-                                // Response on outbound link
-                                let msg = chat::format_incoming_message(
-                                    &event.id,
-                                    payload.as_slice()
-                                );
-                                print_chat(&msg);
-                                print_prompt();
-                            }
-                            LinkEvent::Closed => {
-                                debug!("Outbound link closed: {:?}", event.id);
-                                // Remove closed link from cache
-                                let mut links_guard = network_links.lock().await;
-                                links_guard.remove(&event.id);
-                                // Drop any pending messages (link failed before activating)
-                                let mut pending = network_pending.lock().await;
-                                if let Some(dropped) = pending.remove(&event.id) {
-                                    if !dropped.is_empty() {
-                                        print_chat(&format!(
-                                            "Link closed, {} queued message(s) dropped",
-                                            dropped.len()
-                                        ));
-                                        print_prompt();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
+    let network_task = spawn_network_task(
+        transport.clone(),
+        stats.clone(),
+        cancel.clone(),
+        chat_state.clone(),
+        links.clone(),
+        pending_messages.clone(),
+        destination.clone(),
+    );
 
     // Print welcome message
     print_chat("");
@@ -544,7 +543,7 @@ async fn handle_command(
     chat_state: &Arc<Mutex<ChatState>>,
     stats: &Arc<NodeStats>,
     links: &LinkCache,
-    pending_messages: &Arc<Mutex<HashMap<AddressHash, Vec<QueuedMessage>>>>,
+    pending_messages: &PendingMessages,
 ) {
     match cmd {
         ChatCommand::Message { dest_id, text } => {

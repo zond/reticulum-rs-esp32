@@ -8,6 +8,7 @@ pub mod ble;
 pub mod chat;
 pub mod config;
 pub mod lora;
+pub mod message_queue;
 pub mod network;
 #[cfg(feature = "esp32")]
 pub mod persistence;
@@ -23,6 +24,7 @@ pub use ble::{Fragment, FragmentError, Fragmenter, Reassembler};
 pub use chat::{ChatCommand, ChatState, KnownDestination, HELP_TEXT};
 pub use config::{ConfigCommand, ConfigError, WifiConfig, WifiStatus};
 pub use lora::{calculate_airtime_ms, calculate_airtime_us, DutyCycleLimiter, LoRaParams};
+pub use message_queue::{QueuedMessage, MAX_QUEUED_MESSAGES_PER_DEST, QUEUE_MESSAGE_TTL};
 pub use network::{NetworkError, NetworkProvider, NodeStats, StatsServer, DEFAULT_STATS_PORT};
 pub use routing::{InterfaceType, PathEntry, PathTable, PathTableConfig, RoutingMetrics};
 pub use testnet::{TestnetServer, TestnetTransport, TransportError, DEFAULT_SERVER, SERVERS};
