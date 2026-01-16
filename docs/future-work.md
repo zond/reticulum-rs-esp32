@@ -161,12 +161,11 @@ All high priority documentation issues have been addressed:
 
 ### Medium Priority
 
-| Issue | Location | Description |
-|-------|----------|-------------|
-| Consolidate testing docs | README, CLAUDE.md, testing-strategy.md, qemu-setup.md | Same test commands repeated 4 places. Keep summary in README, details in testing-strategy.md |
-| Add memory constraints to README | `README.md` | 512KB SRAM constraint not mentioned. Add section with link to memory-analysis.md |
-| Create status dashboard | New: `docs/STATUS.md` | No single view of completion %. Create checklist with links |
-| Restructure dense section | `docs/implementation-guide.md:520-585` | Section 5 is 65 lines of mixed content. Add checklist summary |
+All medium priority documentation issues have been addressed:
+- ✅ Testing docs reviewed - structure is appropriate (README concise, testing-strategy.md detailed)
+- ✅ Memory constraints section added to README with link to memory-analysis.md
+- ✅ Status summary added to implementation-guide.md (consolidated, not separate file)
+- ✅ Section 5 already has clear table summary at top
 
 ### Low Priority
 

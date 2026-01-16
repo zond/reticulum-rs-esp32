@@ -148,8 +148,25 @@ cargo build-qemu
 ### Challenges
 
 - BLE mesh requires custom implementation compatible with reticulum-rs
-- Memory constraints on ESP32-S3 (512KB SRAM)
+- Memory constraints on ESP32-S3 (see below)
 - Power management for battery operation
+
+## Memory Constraints
+
+The ESP32-S3 has limited SRAM (512KB), requiring careful memory management:
+
+| Resource | Available | Projected Usage | Margin |
+|----------|-----------|-----------------|--------|
+| Flash | 3.3 MB | ~1.6 MB | 52% free |
+| SRAM | 512 KB | ~452 KB | 12% free |
+| PSRAM | 2 MB | ~256 KB | 87% free |
+
+Key limits enforced in code:
+- `MAX_CONCURRENT_LINKS = 20` - Each link holds crypto state and buffers
+- `MAX_QUEUED_MESSAGES_PER_DEST = 5` - Pending messages per destination
+- `MAX_KNOWN_DESTINATIONS = 100` - Cached announce destinations
+
+For detailed analysis, see [docs/memory-analysis.md](docs/memory-analysis.md).
 
 ## Documentation
 

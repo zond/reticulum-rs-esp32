@@ -13,6 +13,21 @@ Detailed implementation plans for the ESP32 transport node.
 
 **Note**: Features like Channels, Resources, Ratcheting, and Group Destinations are **out of scope** - they're endpoint/application concerns handled by client devices (e.g., Android phone running Sideband), not transport nodes.
 
+## Status Summary
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| LoRa Interface | ✅ Complete | Radio driver + transport adapter |
+| WiFi/TCP | ✅ Complete | Via reticulum-rs TcpClient |
+| BLE Fragmentation | ✅ Complete | Packet splitting/reassembly |
+| BLE Mesh Interface | ⚠️ **BLOCKER** | GATT integration pending |
+| Identity Persistence | ✅ Complete | NVS on ESP32, file on host |
+| Stats HTTP Server | ✅ Complete | JSON on port 8080 |
+| Supporting (cache, routing, etc.) | ✅ Complete | See section 5 |
+| **Hardware Testing** | ❌ Pending | Not yet tested on device |
+
+**Test count**: 166 tests (run with `cargo test`)
+
 ---
 
 ## 1. LoRa Interface (SX1262)
