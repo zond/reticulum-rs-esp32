@@ -217,7 +217,7 @@ On subsequent test runs, `ensure_esp_initialized()` automatically:
 - DNS resolution
 - Full network stack
 
-**Without WiFi:** Network tests still run but will fail connectivity checks.
+**Without WiFi:** Network tests wait for connection (up to 10 seconds) then skip gracefully with a warning message.
 
 ## Best Practices
 

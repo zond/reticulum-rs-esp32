@@ -26,7 +26,7 @@ Detailed implementation plans for the ESP32 transport node.
 | Supporting (cache, routing, etc.) | ✅ Complete | See section 5 |
 | **Hardware Testing** | ❌ Pending | Not yet tested on device |
 
-**Test count**: 176+ tests (run with `cargo test`)
+**Test count**: 185+ tests (run with `cargo test`)
 
 ---
 
