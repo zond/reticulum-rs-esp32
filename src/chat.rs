@@ -42,14 +42,9 @@ const MAX_KNOWN_DESTINATIONS: usize = 100;
 /// 8 hex chars = 4 bytes = ~1 in 4 billion collision probability.
 const DISPLAY_HASH_CHARS: usize = 8;
 
-/// Format an address hash as a short lowercase display string.
-///
-/// Note: Uses Debug formatting which may be fragile if the AddressHash
-/// Debug impl changes. Consider using a proper hex display method if
-/// one becomes available in reticulum-rs.
+/// Format an address hash as a short lowercase hex display string.
 fn format_hash_short(hash: &AddressHash) -> String {
-    format!("{:?}", hash)
-        .to_lowercase()
+    hash.to_hex_string()
         .chars()
         .take(DISPLAY_HASH_CHARS)
         .collect()
@@ -334,6 +329,25 @@ pub fn format_incoming_message(sender_hash: &AddressHash, message: &[u8]) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reticulum::destination::DestinationName;
+    use reticulum::identity::Identity;
+
+    /// Create a test AddressHash from a simple index.
+    fn test_hash(index: u8) -> AddressHash {
+        let mut bytes = [0u8; 16];
+        bytes[0] = index;
+        bytes[15] = index; // Make it more recognizable in hex
+        AddressHash::new(bytes)
+    }
+
+    /// Create a test DestinationDesc.
+    fn test_descriptor(index: u8) -> DestinationDesc {
+        DestinationDesc {
+            identity: Identity::default(),
+            address_hash: test_hash(index),
+            name: DestinationName::new("test", "dest"),
+        }
+    }
 
     #[test]
     fn test_parse_msg_command() {
@@ -407,13 +421,101 @@ mod tests {
     }
 
     #[test]
-    fn test_chat_state_add_destination() {
-        let state = ChatState::new("test".to_string());
+    fn test_chat_state_empty() {
+        let state = ChatState::new("test_identity".to_string());
         assert_eq!(state.all_destinations().len(), 0);
-
-        // We can't easily create AddressHash without the actual hash,
-        // so just test the structure
         assert!(state.format_list().contains("No known destinations"));
-        assert!(state.format_status().contains("test"));
+        assert!(state.format_status().contains("test_identity"));
+    }
+
+    #[test]
+    fn test_chat_state_add_destination() {
+        let mut state = ChatState::new("test".to_string());
+
+        let hash = test_hash(1);
+        let desc = test_descriptor(1);
+        state.add_destination(hash, desc);
+
+        assert_eq!(state.all_destinations().len(), 1);
+        let list = state.format_list();
+        assert!(list.contains("[0]"));
+        // Hash should start with "01" (first byte is 1)
+        assert!(list.contains("01"));
+    }
+
+    #[test]
+    fn test_chat_state_get_destination_by_index() {
+        let mut state = ChatState::new("test".to_string());
+
+        let hash = test_hash(42);
+        let desc = test_descriptor(42);
+        state.add_destination(hash, desc);
+
+        // Should find by index "0"
+        let found = state.get_destination("0");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().hash, hash);
+
+        // Should not find by invalid index
+        assert!(state.get_destination("1").is_none());
+        assert!(state.get_destination("999").is_none());
+    }
+
+    #[test]
+    fn test_chat_state_get_destination_by_hash_prefix() {
+        let mut state = ChatState::new("test".to_string());
+
+        let hash = test_hash(0xAB);
+        let desc = test_descriptor(0xAB);
+        state.add_destination(hash, desc);
+
+        // Should find by hash prefix (first byte is 0xAB)
+        let found = state.get_destination("ab");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().hash, hash);
+
+        // Should not find by non-matching prefix
+        assert!(state.get_destination("ff").is_none());
+    }
+
+    #[test]
+    fn test_chat_state_lru_eviction() {
+        let mut state = ChatState::new("test".to_string());
+
+        // Add MAX_KNOWN_DESTINATIONS entries
+        for i in 0..MAX_KNOWN_DESTINATIONS {
+            state.add_destination(test_hash(i as u8), test_descriptor(i as u8));
+        }
+        assert_eq!(state.all_destinations().len(), MAX_KNOWN_DESTINATIONS);
+
+        // Add one more - should evict the oldest
+        let new_hash = test_hash(255);
+        state.add_destination(new_hash, test_descriptor(255));
+
+        // Should still be at max capacity
+        assert_eq!(state.all_destinations().len(), MAX_KNOWN_DESTINATIONS);
+
+        // The new entry should exist
+        assert!(state.all_destinations().iter().any(|d| d.hash == new_hash));
+
+        // The first entry (hash 0) should have been evicted
+        let first_hash = test_hash(0);
+        assert!(!state
+            .all_destinations()
+            .iter()
+            .any(|d| d.hash == first_hash));
+    }
+
+    #[test]
+    fn test_chat_state_update_existing() {
+        let mut state = ChatState::new("test".to_string());
+
+        let hash = test_hash(1);
+        state.add_destination(hash, test_descriptor(1));
+
+        // Add again with same hash - should update, not duplicate
+        state.add_destination(hash, test_descriptor(1));
+
+        assert_eq!(state.all_destinations().len(), 1);
     }
 }

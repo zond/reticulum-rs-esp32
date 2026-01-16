@@ -19,14 +19,22 @@
 //!
 //! ## Lock Ordering
 //!
-//! To prevent deadlocks, locks must be acquired in this order:
+//! To prevent deadlocks, when acquiring multiple locks, acquire in this order:
 //! 1. `chat_state` - chat state and destination cache
 //! 2. `pending_messages` - queued messages for pending links
 //! 3. `links` - active link cache
 //! 4. `transport` - network transport
 //! 5. Individual `Link` (via `Arc<Mutex<Link>>`)
 //!
-//! Always release locks in reverse order when possible.
+//! This is a partial order: you don't need all locks for every operation.
+//! Most operations only need one or two locks. The rule is: if you need
+//! locks A and B, and A comes before B in the list, acquire A first.
+//!
+//! Examples:
+//! - Sending a message: lock `links`, then lock the specific `Link`
+//! - Processing announce: lock `chat_state` only
+//! - Creating a link: lock `transport` only (link added to cache separately)
+//! - Draining pending messages: lock `pending_messages`, then `links`, then `Link`
 
 use log::{debug, error, info, warn};
 use reticulum::destination::link::{Link, LinkEvent, LinkStatus};
@@ -51,10 +59,14 @@ type LinkCache = Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>;
 /// Type alias for pending message queues per destination.
 type PendingMessages = Arc<Mutex<HashMap<AddressHash, Vec<QueuedMessage>>>>;
 
+/// Default testnet server. Dublin chosen for geographic diversity from
+/// Frankfurt (the other main server). See `src/testnet/config.rs` for alternatives.
 const TESTNET_SERVER: &str = "dublin.connect.reticulum.network:4965";
 
 /// How often to re-announce our presence to the network.
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
+/// 5 minutes balances network traffic (announces are broadcast) with
+/// keeping the network aware of our presence. Reticulum default is similar.
+const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Maximum concurrent links to prevent memory exhaustion.
 /// Each Link holds crypto state (keys, nonces) and buffers. On ESP32 with
@@ -63,6 +75,8 @@ const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 const MAX_CONCURRENT_LINKS: usize = 20;
 
 /// How often to check for and remove expired queued messages.
+/// 10 seconds is frequent enough to prevent stale message buildup but
+/// infrequent enough to avoid unnecessary lock contention.
 const QUEUE_CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
 // ESP32: Initialize ESP-IDF before anything else

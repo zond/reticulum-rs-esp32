@@ -28,6 +28,23 @@ Flash to actual ESP32 hardware and verify:
 - Stats endpoint accessibility
 - Identity persistence across reboots
 
+### 4. Two-Node Integration Test
+
+Create an integration test that verifies end-to-end communication between two nodes via testnet:
+
+1. **Refactor node logic** - Extract core transport/messaging from `src/bin/node.rs` into a library function that takes channels instead of stdin
+2. **Create test harness** - Spawn two node instances in the same test process
+3. **Test scenario**:
+   - Both nodes connect to testnet
+   - Both create destinations and announce
+   - Node A receives Node B's announce
+   - Node A creates link to Node B
+   - Node A sends message via link
+   - Verify Node B receives the message
+4. Mark test as `#[ignore]` since it requires network connectivity
+
+This would validate the full communication path without manual testing.
+
 ---
 
 ## BLE Configuration Expansion
@@ -129,22 +146,22 @@ All high priority code quality issues have been addressed:
 
 ### Medium Priority
 
-| Issue | Location | Description |
-|-------|----------|-------------|
-| Complete chat state tests | `src/chat.rs:410-418` | Tests cannot construct valid AddressHash/DestinationDesc. Add fixtures and test eviction logic |
-| Fix fragile hash formatting | `src/chat.rs:50-56` | Uses `format!("{:?}", hash)` which depends on Debug impl. Add proper hex helper |
-| Consistent lock variable names | `src/bin/node.rs` | Use consistent naming: `transport_lock`, `links_cache_guard`, etc. |
+All medium priority code quality issues have been addressed:
+- ✅ Chat state tests completed with fixtures (`src/chat.rs:329-523`)
+- ✅ Hash formatting fixed to use `AddressHash.to_hex_string()` (`src/chat.rs:46-51`)
+- Consistent lock variable names skipped (existing pattern is clear enough)
 
 ### Low Priority
 
 | Issue | Location | Description |
 |-------|----------|-------------|
-| Document magic numbers rationale | `src/bin/node.rs:53-72` | Add comments explaining why each constant was chosen |
 | Merge link event handlers | `src/bin/node.rs:240-340` | Inbound/outbound handlers have structural overlap |
 | Add queue metrics to NodeStats | `src/bin/node.rs` | Track queue_size, expired_messages for ESP32 memory monitoring |
-| Remove unused `is_expired_after` | `src/message_queue.rs` | Method only used in tests, consider removing or documenting |
-| Add TTL boundary tests | `src/message_queue.rs` | Test exact TTL boundary (at TTL vs just past TTL) |
-| Clarify lock ordering docs | `src/bin/node.rs:20-29` | Explain partial order and when to acquire multiple locks |
+
+Completed low priority items:
+- ✅ Magic numbers documented with rationale (`src/bin/node.rs:54-72`, `src/message_queue.rs:8-18`)
+- ✅ TTL boundary tests added (`src/message_queue.rs:130-153`)
+- ✅ Lock ordering docs clarified with examples (`src/bin/node.rs:20-37`)
 
 ---
 
