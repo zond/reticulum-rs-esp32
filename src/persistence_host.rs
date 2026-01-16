@@ -120,6 +120,7 @@ pub fn load_or_create_identity() -> io::Result<PrivateIdentity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reticulum_rs_esp32_macros::esp32_test;
     use std::env;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -132,7 +133,7 @@ mod tests {
         env::temp_dir().join(format!("reticulum-test-{}-{}.hex", pid, id))
     }
 
-    #[test]
+    #[esp32_test]
     fn test_identity_roundtrip() {
         let path = unique_identity_path();
 
@@ -146,7 +147,7 @@ mod tests {
         let _ = fs::remove_file(&path);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_load_or_create() {
         let path = unique_identity_path();
 

@@ -72,14 +72,15 @@ impl NetworkProvider for HostNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reticulum_rs_esp32_macros::esp32_test;
 
-    #[test]
+    #[esp32_test]
     fn test_host_network_always_connected() {
         let network = HostNetwork::new();
         assert!(network.is_connected());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_host_network_connect() {
         let mut network = HostNetwork::new();
         let result = network.connect();
@@ -87,7 +88,7 @@ mod tests {
         // IP detection might fail in some CI environments, so we don't assert on ip_addr
     }
 
-    #[test]
+    #[esp32_test]
     fn test_detect_local_ip() {
         // This test may fail in environments without network access
         let ip = HostNetwork::detect_local_ip();

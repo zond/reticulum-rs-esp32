@@ -35,8 +35,10 @@
 use super::config::LORA_MTU;
 use super::radio::{LoRaRadio, ReceivedPacket};
 use log::{debug, error, info, warn};
+use reticulum::buffer::{InputBuffer, OutputBuffer};
 use reticulum::iface::{Interface, InterfaceContext, RxMessage};
 use reticulum::packet::Packet;
+use reticulum::serde::Serialize;
 use std::time::Duration;
 
 /// LoRa receive timeout per poll (ms).
@@ -106,8 +108,14 @@ impl<'d> LoRaInterface<'d> {
             // Priority 1: Handle TX (we control when to transmit)
             if let Ok(tx_msg) = tx_channel.try_recv() {
                 let packet = tx_msg.packet;
-                // TODO: Consider pre-allocated buffer to reduce heap fragmentation
-                let data = packet.raw().to_vec();
+                // Serialize packet to raw bytes for transmission
+                let mut buffer = [0u8; LORA_MTU];
+                let mut output = OutputBuffer::new(&mut buffer);
+                if let Err(e) = packet.serialize(&mut output) {
+                    warn!("Failed to serialize packet: {:?}", e);
+                    continue;
+                }
+                let data = output.as_slice().to_vec();
                 debug!("LoRa TX: {} bytes", data.len());
 
                 let inner = context.inner.clone();
@@ -218,8 +226,8 @@ async fn handle_rx_packet(
     }
 
     // Parse the raw bytes into a packet
-    let packet = Packet::try_from(received.data.as_slice())
-        .map_err(|e| format!("Invalid packet: {:?}", e))?;
+    let mut input = InputBuffer::new(received.data.as_slice());
+    let packet = Packet::deserialize(&mut input).map_err(|e| format!("Invalid packet: {:?}", e))?;
 
     // Forward to transport
     let rx_msg = RxMessage {

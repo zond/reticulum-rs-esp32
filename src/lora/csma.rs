@@ -257,8 +257,9 @@ impl Csma {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reticulum_rs_esp32_macros::esp32_test;
 
-    #[test]
+    #[esp32_test]
     fn test_default_config() {
         let config = CsmaConfig::default();
         assert_eq!(config.rssi_threshold_dbm, -90);
@@ -267,13 +268,13 @@ mod tests {
         assert_eq!(config.max_backoff_ms, 500);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_config_validation_valid() {
         let config = CsmaConfig::default();
         assert!(config.validate().is_ok());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_config_validation_zero_min_backoff() {
         let config = CsmaConfig {
             min_backoff_ms: 0,
@@ -285,7 +286,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_config_validation_max_less_than_min() {
         let config = CsmaConfig {
             min_backoff_ms: 100,
@@ -298,7 +299,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_config_validation_zero_retries() {
         let config = CsmaConfig {
             max_retries: 0,
@@ -310,7 +311,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_config_validation_max_retries_too_high() {
         let config = CsmaConfig {
             max_retries: 21,
@@ -322,7 +323,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_config_validation_rssi_too_high() {
         let config = CsmaConfig {
             rssi_threshold_dbm: -39,
@@ -334,7 +335,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_config_validation_rssi_too_low() {
         let config = CsmaConfig {
             rssi_threshold_dbm: -141,
@@ -346,14 +347,14 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_channel_clear_at_threshold() {
         let csma = Csma::default();
         // At threshold = clear
         assert!(csma.is_channel_clear(-90));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_channel_clear_below_threshold() {
         let csma = Csma::default();
         // Below threshold (weaker signal) = clear
@@ -361,7 +362,7 @@ mod tests {
         assert!(csma.is_channel_clear(-120));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_channel_busy_above_threshold() {
         let csma = Csma::default();
         // Above threshold (stronger signal) = busy
@@ -370,7 +371,7 @@ mod tests {
         assert!(!csma.is_channel_clear(0));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_try_access_channel_clear() {
         let mut csma = Csma::default();
         let result = csma.try_access(-100); // Well below threshold
@@ -378,7 +379,7 @@ mod tests {
         assert_eq!(csma.retries(), 0); // No retry needed
     }
 
-    #[test]
+    #[esp32_test]
     fn test_try_access_channel_busy() {
         let mut csma = Csma::default();
         csma.seed(12345);
@@ -388,7 +389,7 @@ mod tests {
         assert_eq!(csma.retries(), 1);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_try_access_max_retries() {
         let config = CsmaConfig {
             max_retries: 3,
@@ -408,7 +409,7 @@ mod tests {
         assert_eq!(result, CsmaResult::GiveUp);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_reset_clears_retries() {
         let mut csma = Csma::default();
         csma.seed(12345);
@@ -423,7 +424,7 @@ mod tests {
         assert_eq!(csma.retries(), 0);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_backoff_within_bounds() {
         let config = CsmaConfig {
             min_backoff_ms: 10,
@@ -443,7 +444,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[esp32_test]
     fn test_backoff_exponential_growth() {
         let config = CsmaConfig {
             min_backoff_ms: 10,
@@ -471,7 +472,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[esp32_test]
     fn test_backoff_capped_at_max() {
         let config = CsmaConfig {
             min_backoff_ms: 100,
@@ -491,7 +492,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[esp32_test]
     fn test_deterministic_with_same_seed() {
         let config = CsmaConfig::default();
 
@@ -509,7 +510,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[esp32_test]
     fn test_different_seeds_different_results() {
         let config = CsmaConfig::default();
 
@@ -535,7 +536,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[esp32_test]
     fn test_custom_threshold() {
         let config = CsmaConfig::with_threshold(-80);
         let csma = Csma::new(config);
@@ -545,7 +546,7 @@ mod tests {
         assert!(!csma.is_channel_clear(-75)); // Above
     }
 
-    #[test]
+    #[esp32_test]
     fn test_workflow_success_after_retry() {
         let mut csma = Csma::default();
         csma.seed(12345);
@@ -567,7 +568,7 @@ mod tests {
         assert_eq!(csma.retries(), 0);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_zero_seed_converted_to_one() {
         let mut csma1 = Csma::default();
         let mut csma2 = Csma::default();

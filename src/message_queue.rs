@@ -65,15 +65,16 @@ impl QueuedMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reticulum_rs_esp32_macros::esp32_test;
 
-    #[test]
+    #[esp32_test]
     fn test_new_message_not_expired() {
         let msg = QueuedMessage::new("hello".to_string());
         assert!(!msg.is_expired());
         assert_eq!(msg.text(), "hello");
     }
 
-    #[test]
+    #[esp32_test]
     fn test_message_expires_after_ttl() {
         // Create a message that appears to be queued in the past
         let old_time = Instant::now() - QUEUE_MESSAGE_TTL - Duration::from_secs(1);
@@ -81,7 +82,7 @@ mod tests {
         assert!(msg.is_expired());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_message_not_expired_before_ttl() {
         // Create a message that appears to be queued recently
         let recent_time = Instant::now() - QUEUE_MESSAGE_TTL + Duration::from_secs(10);
@@ -89,7 +90,7 @@ mod tests {
         assert!(!msg.is_expired());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_is_expired_after_custom_duration() {
         let msg = QueuedMessage::new("test".to_string());
         // A brand new message shouldn't be expired after 1 second
@@ -104,14 +105,14 @@ mod tests {
         assert!(!old_msg.is_expired_after(Duration::from_secs(10)));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_queue_constants() {
         // Verify constants are reasonable
         assert_eq!(QUEUE_MESSAGE_TTL, Duration::from_secs(60));
         assert_eq!(MAX_QUEUED_MESSAGES_PER_DEST, 5);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_message_clone() {
         let msg = QueuedMessage::new("test".to_string());
         let cloned = msg.clone();
@@ -120,14 +121,14 @@ mod tests {
         assert_eq!(msg.queued_at(), cloned.queued_at());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_message_debug() {
         let msg = QueuedMessage::new("debug test".to_string());
         let debug_str = format!("{:?}", msg);
         assert!(debug_str.contains("debug test"));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_ttl_boundary_at_exact_ttl() {
         // Test the boundary condition: elapsed == threshold should NOT be expired
         // (uses > not >=). We simulate this by creating a message with known elapsed
@@ -140,7 +141,7 @@ mod tests {
         assert!(!msg.is_expired_after(elapsed + Duration::from_secs(1)));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_ttl_boundary_just_past_ttl() {
         // Message queued longer than TTL should be expired.
         let just_past = Instant::now() - QUEUE_MESSAGE_TTL - Duration::from_secs(1);
@@ -148,7 +149,7 @@ mod tests {
         assert!(msg.is_expired());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_ttl_boundary_just_before_ttl() {
         // Message queued less than TTL ago should NOT be expired.
         let just_before = Instant::now() - QUEUE_MESSAGE_TTL + Duration::from_secs(10);

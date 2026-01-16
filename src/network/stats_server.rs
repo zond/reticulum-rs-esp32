@@ -17,6 +17,11 @@
 //!   "routing": {
 //!     "announce_cache_size": 25,
 //!     "path_table_size": 8
+//!   },
+//!   "queue": {
+//!     "queued_messages": 3,
+//!     "expired_messages": 12,
+//!     "dropped_on_close": 5
 //!   }
 //! }
 //! ```
@@ -95,6 +100,40 @@ impl RoutingStats {
     }
 }
 
+/// Message queue statistics for ESP32 memory monitoring.
+///
+/// Tracks the pending message queue state to help identify memory pressure
+/// from slow link establishment or excessive queueing.
+#[derive(Debug, Default)]
+pub struct QueueStats {
+    /// Current total queued messages across all destinations.
+    /// This should stay below MAX_QUEUED_MESSAGES_PER_DEST * active_links.
+    pub queued_messages: AtomicUsize,
+    /// Cumulative count of messages expired due to TTL.
+    /// High values may indicate links failing to establish.
+    pub expired_messages: AtomicUsize,
+    /// Cumulative count of messages dropped when links close.
+    /// Normal during link churn, but high sustained values may indicate issues.
+    pub dropped_on_close: AtomicUsize,
+}
+
+impl QueueStats {
+    /// Create new queue stats.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Serialize to JSON.
+    fn to_json(&self) -> String {
+        format!(
+            r#"{{"queued_messages":{},"expired_messages":{},"dropped_on_close":{}}}"#,
+            self.queued_messages.load(Ordering::Relaxed),
+            self.expired_messages.load(Ordering::Relaxed),
+            self.dropped_on_close.load(Ordering::Relaxed)
+        )
+    }
+}
+
 /// Node statistics container.
 ///
 /// This struct is shared across the application and updated by various components.
@@ -113,6 +152,8 @@ pub struct NodeStats {
     pub testnet: InterfaceStats,
     /// Routing statistics.
     pub routing: RoutingStats,
+    /// Message queue statistics for memory monitoring.
+    pub queue: QueueStats,
 }
 
 impl NodeStats {
@@ -129,6 +170,7 @@ impl NodeStats {
             ble: InterfaceStats::new(),
             testnet: InterfaceStats::new(),
             routing: RoutingStats::new(),
+            queue: QueueStats::new(),
         }
     }
 
@@ -140,13 +182,14 @@ impl NodeStats {
     /// Serialize all statistics to JSON.
     pub fn to_json(&self) -> String {
         format!(
-            r#"{{"uptime_secs":{},"identity_hash":"{}","interfaces":{{"lora":{},"ble":{},"testnet":{}}},"routing":{}}}"#,
+            r#"{{"uptime_secs":{},"identity_hash":"{}","interfaces":{{"lora":{},"ble":{},"testnet":{}}},"routing":{},"queue":{}}}"#,
             self.uptime_secs(),
             self.identity_hash,
             self.lora.to_json(),
             self.ble.to_json(),
             self.testnet.to_json(),
-            self.routing.to_json()
+            self.routing.to_json(),
+            self.queue.to_json()
         )
     }
 }
@@ -308,15 +351,16 @@ impl Drop for StatsServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reticulum_rs_esp32_macros::esp32_test;
 
-    #[test]
+    #[esp32_test]
     fn test_interface_stats_new() {
         let stats = InterfaceStats::new();
         assert_eq!(stats.tx.load(Ordering::Relaxed), 0);
         assert_eq!(stats.rx.load(Ordering::Relaxed), 0);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_interface_stats_record() {
         let stats = InterfaceStats::new();
         stats.record_tx();
@@ -327,7 +371,7 @@ mod tests {
         assert_eq!(stats.rx.load(Ordering::Relaxed), 2);
     }
 
-    #[test]
+    #[esp32_test]
     fn test_node_stats_json() {
         let stats = NodeStats::new("abc123".to_string());
         let json = stats.to_json();
@@ -336,9 +380,31 @@ mod tests {
         assert!(json.contains("\"uptime_secs\":"));
         assert!(json.contains("\"interfaces\":"));
         assert!(json.contains("\"routing\":"));
+        assert!(json.contains("\"queue\":"));
     }
 
-    #[test]
+    #[esp32_test]
+    fn test_queue_stats_new() {
+        let stats = QueueStats::new();
+        assert_eq!(stats.queued_messages.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.expired_messages.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.dropped_on_close.load(Ordering::Relaxed), 0);
+    }
+
+    #[esp32_test]
+    fn test_queue_stats_json() {
+        let stats = QueueStats::new();
+        stats.queued_messages.store(5, Ordering::Relaxed);
+        stats.expired_messages.store(10, Ordering::Relaxed);
+        stats.dropped_on_close.store(3, Ordering::Relaxed);
+
+        let json = stats.to_json();
+        assert!(json.contains("\"queued_messages\":5"));
+        assert!(json.contains("\"expired_messages\":10"));
+        assert!(json.contains("\"dropped_on_close\":3"));
+    }
+
+    #[esp32_test]
     fn test_node_stats_uptime() {
         let stats = NodeStats::new("test".to_string());
         std::thread::sleep(std::time::Duration::from_millis(10));

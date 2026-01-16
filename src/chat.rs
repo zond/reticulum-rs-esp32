@@ -331,6 +331,7 @@ mod tests {
     use super::*;
     use reticulum::destination::DestinationName;
     use reticulum::identity::Identity;
+    use reticulum_rs_esp32_macros::esp32_test;
 
     /// Create a test AddressHash from a simple index.
     fn test_hash(index: u8) -> AddressHash {
@@ -349,7 +350,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_msg_command() {
         match ChatCommand::parse("msg 0 Hello world") {
             ChatCommand::Message { dest_id, text } => {
@@ -360,7 +361,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_msg_shortcut() {
         match ChatCommand::parse("m a1b2 Test") {
             ChatCommand::Message { dest_id, text } => {
@@ -371,7 +372,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_broadcast() {
         match ChatCommand::parse("broadcast Hello everyone") {
             ChatCommand::Broadcast { text } => {
@@ -381,37 +382,37 @@ mod tests {
         }
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_list() {
         assert!(matches!(ChatCommand::parse("list"), ChatCommand::List));
         assert!(matches!(ChatCommand::parse("ls"), ChatCommand::List));
         assert!(matches!(ChatCommand::parse("l"), ChatCommand::List));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_status() {
         assert!(matches!(ChatCommand::parse("status"), ChatCommand::Status));
         assert!(matches!(ChatCommand::parse("s"), ChatCommand::Status));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_help() {
         assert!(matches!(ChatCommand::parse("help"), ChatCommand::Help));
         assert!(matches!(ChatCommand::parse("?"), ChatCommand::Help));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_unknown() {
         assert!(matches!(ChatCommand::parse("foo"), ChatCommand::Unknown(_)));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_parse_empty() {
         assert!(matches!(ChatCommand::parse(""), ChatCommand::Unknown(_)));
         assert!(matches!(ChatCommand::parse("   "), ChatCommand::Unknown(_)));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_msg_missing_args() {
         assert!(matches!(ChatCommand::parse("msg"), ChatCommand::Unknown(_)));
         assert!(matches!(
@@ -420,7 +421,7 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_chat_state_empty() {
         let state = ChatState::new("test_identity".to_string());
         assert_eq!(state.all_destinations().len(), 0);
@@ -428,7 +429,7 @@ mod tests {
         assert!(state.format_status().contains("test_identity"));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_chat_state_add_destination() {
         let mut state = ChatState::new("test".to_string());
 
@@ -443,7 +444,7 @@ mod tests {
         assert!(list.contains("01"));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_chat_state_get_destination_by_index() {
         let mut state = ChatState::new("test".to_string());
 
@@ -461,7 +462,7 @@ mod tests {
         assert!(state.get_destination("999").is_none());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_chat_state_get_destination_by_hash_prefix() {
         let mut state = ChatState::new("test".to_string());
 
@@ -478,7 +479,7 @@ mod tests {
         assert!(state.get_destination("ff").is_none());
     }
 
-    #[test]
+    #[esp32_test]
     fn test_chat_state_lru_eviction() {
         let mut state = ChatState::new("test".to_string());
 
@@ -506,7 +507,7 @@ mod tests {
             .any(|d| d.hash == first_hash));
     }
 
-    #[test]
+    #[esp32_test]
     fn test_chat_state_update_existing() {
         let mut state = ChatState::new("test".to_string());
 
