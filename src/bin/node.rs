@@ -679,7 +679,8 @@ async fn handle_command(
                 return;
             }
 
-            let mut sent = 0;
+            // Phase 1: Collect all packets (brief lock per link)
+            let mut packets = Vec::new();
             let mut skipped = 0;
             for dest in destinations {
                 // Get or create link
@@ -700,11 +701,18 @@ async fn handle_command(
                 }
 
                 if let Ok(packet) = link_guard.data_packet(text.as_bytes()) {
-                    drop(link_guard);
-                    let t = transport.lock().await;
+                    packets.push(packet);
+                }
+                // link_guard dropped here
+            }
+
+            // Phase 2: Send all packets in single transport lock
+            let sent = packets.len();
+            if !packets.is_empty() {
+                let t = transport.lock().await;
+                for packet in packets {
                     t.send_packet(packet).await;
                     stats.testnet.record_tx();
-                    sent += 1;
                 }
             }
 

@@ -1616,6 +1616,8 @@ dependencies = [
  "regiface",
  "reticulum",
  "reticulum-rs-esp32-macros",
+ "serde",
+ "serde_json",
  "sha2",
  "sx1262",
  "tiny_http",

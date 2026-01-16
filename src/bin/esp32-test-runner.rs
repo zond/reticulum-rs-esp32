@@ -9,6 +9,7 @@
 use reticulum_rs_esp32::host_utils::{
     find_esp32_port, find_qemu, flash_binary, list_available_ports, start_monitor,
 };
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -19,8 +20,22 @@ use std::time::{Duration, Instant};
 const TEST_TIMEOUT_SECS: u64 = 120;
 const RUST_TARGET: &str = "xtensa-esp32-espidf";
 const CHIP: &str = "esp32";
-/// Minimum size for a valid test binary (filters out metadata files).
-const MIN_TEST_BINARY_SIZE: u64 = 100_000;
+
+/// Cargo compiler artifact message (subset of fields we care about).
+#[derive(Deserialize)]
+struct CargoMessage {
+    reason: String,
+    #[serde(default)]
+    executable: Option<String>,
+    #[serde(default)]
+    target: Option<CargoTarget>,
+}
+
+/// Cargo target info from compiler artifact message.
+#[derive(Deserialize)]
+struct CargoTarget {
+    kind: Vec<String>,
+}
 
 /// Target environment for running tests.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,7 +161,8 @@ fn parse_args() -> Target {
 fn run(target: Target) -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Building tests for {} ===", target.name());
 
-    let status = Command::new("cargo")
+    // Build with JSON output to reliably find the test binary
+    let output = Command::new("cargo")
         .args([
             "test",
             "--no-run",
@@ -155,15 +171,17 @@ fn run(target: Target) -> Result<(), Box<dyn std::error::Error>> {
             "--features",
             "esp32",
             "--release",
+            "--message-format=json",
         ])
-        .status()?;
+        .stderr(Stdio::inherit()) // Show build progress
+        .output()?;
 
-    if !status.success() {
+    if !output.status.success() {
         return Err("Build failed".into());
     }
 
-    // Find the test binary
-    let test_binary = find_test_binary()?;
+    // Parse JSON output to find the test binary
+    let test_binary = find_test_binary_from_json(&output.stdout)?;
     println!("Found test binary: {}", test_binary.display());
 
     match target {
@@ -414,39 +432,34 @@ fn check_crash_pattern(line: &str, state: TestState) -> Option<String> {
     None
 }
 
-fn find_test_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let deps_dir = PathBuf::from(format!("target/{}/release/deps", RUST_TARGET));
+/// Parse cargo JSON output to find the test binary path.
+///
+/// Looks for compiler-artifact messages with kind "lib" and an executable path.
+fn find_test_binary_from_json(json_output: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let output_str = String::from_utf8_lossy(json_output);
 
-    if !deps_dir.exists() {
-        return Err(format!("Build output directory not found: {}", deps_dir.display()).into());
-    }
+    // Each line is a separate JSON message
+    for line in output_str.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
 
-    // Find the most recently modified test binary
-    let mut best_candidate: Option<(PathBuf, std::time::SystemTime)> = None;
+        // Parse JSON message (ignore parse errors for non-JSON lines)
+        let msg: CargoMessage = match serde_json::from_str(line) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
 
-    for entry in std::fs::read_dir(&deps_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with("reticulum_rs_esp32-") && !name.contains('.') && path.is_file() {
-                let metadata = std::fs::metadata(&path)?;
-                // Must meet minimum size to be a real test binary
-                if metadata.len() > MIN_TEST_BINARY_SIZE {
-                    let modified = metadata.modified()?;
-                    match &best_candidate {
-                        None => best_candidate = Some((path, modified)),
-                        Some((_, best_time)) if modified > *best_time => {
-                            best_candidate = Some((path, modified));
-                        }
-                        _ => {}
-                    }
+        // Look for compiler-artifact with executable
+        if msg.reason == "compiler-artifact" {
+            if let (Some(executable), Some(target)) = (msg.executable, msg.target) {
+                // We want the lib target (test binary), not proc-macro or bin
+                if target.kind.contains(&"lib".to_string()) {
+                    return Ok(PathBuf::from(executable));
                 }
             }
         }
     }
 
-    best_candidate
-        .map(|(path, _)| path)
-        .ok_or_else(|| format!("Test binary not found in {}", deps_dir.display()).into())
+    Err("No test binary found in cargo output".into())
 }

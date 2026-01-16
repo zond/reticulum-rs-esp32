@@ -102,10 +102,10 @@ From code review (2026-01):
 
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
-| Use Cargo JSON metadata | Replace heuristic binary detection in test runner with `--message-format=json` | Medium |
 | Configurable flash size | Hardcoded 4MB flash size in test runner | Low |
 
 **Resolved (2026-01)**:
+- ✅ Cargo JSON metadata - Uses `--message-format=json` for deterministic test binary detection
 - ✅ Cross-platform monitor - Now uses `espflash monitor --non-interactive` instead of macOS-specific `script` wrapper
 - ✅ Crash detection state machine - Uses `TestState` enum (Booting/Initialized/Running) for context-aware crash detection
 - ✅ Port detection glob optimization - Uses specific `/dev/ttyUSB*` and `/dev/ttyACM*` patterns instead of `/dev/tty*` filtering
@@ -124,7 +124,9 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
-| Batch broadcast sends | Create all packets then send in single lock hold | Low |
-| O(1) LRU eviction | Replace O(n) scan with doubly-linked list | Low |
 | Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |
+
+**Resolved (2026-01)**:
+- ✅ Batch broadcast sends - Packets collected first, then sent in single transport lock
+- ✅ O(1) LRU eviction - Evaluated; current O(n) scan takes <1μs at 100 entries, LRU crates don't fit the data model well (need sequential indexing + multi-field structs)
 
