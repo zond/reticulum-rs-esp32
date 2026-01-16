@@ -139,6 +139,23 @@ cargo build-qemu
 
 ## Architecture
 
+```
+┌─────────────────────────────────────────────────────────┐
+│                    node binary                          │
+├─────────────────────────────────────────────────────────┤
+│  reticulum-rs Transport                                 │
+│  ├── TcpClient (testnet) ✅                             │
+│  ├── LoRaInterface ✅                                   │
+│  └── BleInterface ⚠️ (fragmentation done, mesh pending) │
+├─────────────────────────────────────────────────────────┤
+│  Supporting Components                                  │
+│  ├── Identity Persistence    ├── Announce Cache         │
+│  ├── Stats HTTP Server       ├── Path Table             │
+│  ├── Duty Cycle Limiter      ├── CSMA/CA                │
+│  └── Serial Chat Interface                              │
+└─────────────────────────────────────────────────────────┘
+```
+
 ### Transport Layers
 
 1. **LoRa**: Direct integration with reticulum-rs using SX1262 driver

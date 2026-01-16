@@ -155,5 +155,3 @@ For firmware testing, these differences are usually not significant. Hardware-sp
 - [esp-idf-sys BUILD-OPTIONS.md](https://github.com/esp-rs/esp-idf-sys/blob/master/BUILD-OPTIONS.md)
 
 ---
-
-*Updated 2026-01-13: Unified sdkconfig for QEMU and hardware builds*

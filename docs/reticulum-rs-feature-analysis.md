@@ -337,5 +337,3 @@ Many features (Channels, Resources, Ratcheting, Group Destinations) are **not ne
 The existing reticulum-rs code quality is good, with clear architecture and proper async patterns. Our work is focused on hardware interfaces (LoRa, BLE mesh) and transport node essentials.
 
 ---
-
-*Updated 2026-01-14: Updated implementation status (LoRa interface, stats endpoint, chat interface complete)*

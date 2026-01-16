@@ -240,5 +240,3 @@ Standard `#[test]` works, but ESP-IDF needs initialization before tests run. The
 - [Espressif QEMU Releases](https://github.com/espressif/qemu/releases)
 
 ---
-
-*Updated 2026-01-14: Updated test counts (159 unit tests + 9 doc tests)*

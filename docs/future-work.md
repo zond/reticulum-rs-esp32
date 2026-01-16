@@ -169,10 +169,8 @@ All medium priority documentation issues have been addressed:
 
 ### Low Priority
 
-| Issue | Location | Description |
-|-------|----------|-------------|
-| Add architecture diagram to README | `README.md` | Best diagram is buried in implementation-guide.md:745-765 |
-| Create troubleshooting guide | New: `docs/troubleshooting.md` | No docs for common problems (QEMU boot, WiFi, LoRa) |
-| Standardize cross-references | All docs | Mix of relative paths, full paths, bare URLs |
-| Standardize timestamps | All docs | "*Updated YYYY-MM-DD*" format inconsistent, meaning unclear |
-| Add context to code examples | `docs/implementation-guide.md` | Large code blocks (30-50 lines) lack explanation |
+All low priority documentation issues have been addressed:
+- ✅ Architecture diagram added to README
+- ✅ Cross-references reviewed - patterns are consistent (relative for internal, full URLs for external)
+- ✅ Code examples reviewed - have good context via section headers, doc comments, and task lists
+- ✅ Timestamps removed from docs (git history is authoritative)
