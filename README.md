@@ -94,9 +94,24 @@ cargo flash-qemu    # Build and run in QEMU emulator
 ```bash
 cargo test          # Run tests on host (fastest iteration)
 cargo test-qemu     # Run tests in QEMU (ESP32 emulation)
+cargo test-esp32    # Run tests on real hardware
 ```
 
 For test architecture details, see [docs/testing-strategy.md](docs/testing-strategy.md).
+
+### WiFi Configuration (For Network Tests)
+
+To run network tests on real hardware, first configure WiFi credentials:
+
+```bash
+# Store WiFi credentials in ESP32 NVS
+WIFI_SSID="MyNetwork" WIFI_PASSWORD="secret" cargo configure-wifi
+
+# For open networks:
+WIFI_SSID="OpenNetwork" WIFI_PASSWORD="" cargo configure-wifi
+```
+
+This flashes a utility that stores credentials in non-volatile storage. Subsequent test runs auto-detect and connect to WiFi, enabling network tests (testnet connectivity, etc.).
 
 ### Development
 
@@ -121,10 +136,12 @@ cargo build-esp32 --features region-as923   # Asia 920-923 MHz
 |---------|-------------|
 | `cargo test` | Run host tests (fastest) |
 | `cargo test-qemu` | Run tests in QEMU |
+| `cargo test-esp32` | Run tests on real hardware |
 | `cargo build-esp32` | Build release firmware |
 | `cargo build-qemu` | Build for QEMU |
 | `cargo flash-esp32` | Build and flash to device |
 | `cargo flash-qemu` | Build and run in QEMU |
+| `cargo configure-wifi` | Store WiFi credentials for network tests |
 
 For build configuration details, see [docs/research-findings.md](docs/research-findings.md).
 

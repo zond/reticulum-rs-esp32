@@ -1,0 +1,452 @@
+//! Unified test runner for ESP32 tests.
+//!
+//! Supports running tests in QEMU (emulator) or on real hardware.
+//!
+//! Usage:
+//!   cargo test-qemu      # Run in QEMU emulator
+//!   cargo test-esp32     # Run on real ESP32 hardware
+
+use reticulum_rs_esp32::host_utils::{
+    find_esp32_port, find_qemu, flash_binary, list_available_ports, start_monitor,
+};
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{exit, Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+const TEST_TIMEOUT_SECS: u64 = 120;
+const RUST_TARGET: &str = "xtensa-esp32-espidf";
+const CHIP: &str = "esp32";
+/// Minimum size for a valid test binary (filters out metadata files).
+const MIN_TEST_BINARY_SIZE: u64 = 100_000;
+
+/// Target environment for running tests.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Target {
+    /// QEMU emulator (ESP32)
+    Qemu,
+    /// Real ESP32 hardware
+    Hardware,
+}
+
+impl Target {
+    fn name(&self) -> &'static str {
+        match self {
+            Target::Qemu => "QEMU",
+            Target::Hardware => "ESP32",
+        }
+    }
+}
+
+/// RAII guard to ensure child process is always cleaned up.
+struct ProcessGuard(Child);
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Reset terminal to sane state after espflash monitor may have corrupted it.
+/// espflash can leave terminal in raw mode where \n doesn't return to column 0.
+fn reset_terminal() {
+    // Use stty sane to reset terminal settings
+    let _ = Command::new("stty").arg("sane").status();
+}
+
+/// Calculate SHA256 hash of a file.
+fn hash_file(path: &Path) -> Result<String, std::io::Error> {
+    let data = fs::read(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Get path to the hash cache file for a given binary.
+fn hash_cache_path(binary_path: &Path) -> PathBuf {
+    let parent = binary_path.parent().unwrap_or(Path::new("."));
+    parent.join(".last_flashed_hash")
+}
+
+/// Check if binary needs to be reflashed by comparing hashes.
+/// Returns true if flash is needed (hash mismatch or no cached hash).
+fn needs_reflash(binary_path: &Path) -> bool {
+    let cache_path = hash_cache_path(binary_path);
+
+    // Calculate current binary hash
+    let current_hash = match hash_file(binary_path) {
+        Ok(h) => h,
+        Err(_) => return true, // Can't read binary, need to flash
+    };
+
+    // Read cached hash
+    let cached_hash = match fs::read_to_string(&cache_path) {
+        Ok(h) => h.trim().to_string(),
+        Err(_) => return true, // No cache, need to flash
+    };
+
+    current_hash != cached_hash
+}
+
+/// Save hash after successful flash.
+fn save_flash_hash(binary_path: &Path) {
+    if let Ok(hash) = hash_file(binary_path) {
+        let cache_path = hash_cache_path(binary_path);
+        let _ = fs::write(cache_path, hash);
+    }
+}
+
+fn main() {
+    let target = parse_args();
+
+    if let Err(e) = run(target) {
+        eprintln!("Error: {}", e);
+        exit(1);
+    }
+}
+
+fn parse_args() -> Target {
+    let args: Vec<String> = std::env::args().collect();
+
+    // Check for explicit flag
+    for arg in &args[1..] {
+        match arg.as_str() {
+            "--qemu" | "-q" => return Target::Qemu,
+            "--hardware" | "--hw" => return Target::Hardware,
+            "--help" => {
+                println!("ESP32 Test Runner");
+                println!();
+                println!("Usage:");
+                println!("  {} [OPTIONS]", args[0]);
+                println!();
+                println!("Options:");
+                println!("  --qemu, -q       Run tests in QEMU emulator (default)");
+                println!("  --hardware, --hw Run tests on real ESP32 hardware");
+                println!("  --help           Show this help");
+                exit(0);
+            }
+            _ => {}
+        }
+    }
+
+    // Auto-detect based on binary name
+    if let Some(name) = args.first().and_then(|s| s.split('/').next_back()) {
+        if name.contains("esp32") && !name.contains("qemu") {
+            return Target::Hardware;
+        }
+    }
+
+    // Default to QEMU
+    Target::Qemu
+}
+
+fn run(target: Target) -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== Building tests for {} ===", target.name());
+
+    let status = Command::new("cargo")
+        .args([
+            "test",
+            "--no-run",
+            "--target",
+            RUST_TARGET,
+            "--features",
+            "esp32",
+            "--release",
+        ])
+        .status()?;
+
+    if !status.success() {
+        return Err("Build failed".into());
+    }
+
+    // Find the test binary
+    let test_binary = find_test_binary()?;
+    println!("Found test binary: {}", test_binary.display());
+
+    match target {
+        Target::Qemu => run_qemu_tests(&test_binary),
+        Target::Hardware => run_hardware_tests(&test_binary),
+    }
+}
+
+fn run_qemu_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Create flash image
+    println!("\n=== Creating flash image ===");
+    let image_path = PathBuf::from("target/qemu-tests.bin");
+
+    let status = Command::new("espflash")
+        .args([
+            "save-image",
+            "--chip",
+            "esp32",
+            "--merge",
+            &test_binary.to_string_lossy(),
+            &image_path.to_string_lossy(),
+            "--flash-size",
+            "4mb",
+        ])
+        .status()?;
+
+    if !status.success() {
+        return Err("Failed to create flash image".into());
+    }
+
+    // Find QEMU
+    let qemu_path = find_qemu()
+        .ok_or("QEMU not found. Install from: https://github.com/espressif/qemu/releases")?;
+    println!("Using QEMU: {}", qemu_path.display());
+
+    // Run QEMU
+    println!("\n=== Running tests in QEMU ===\n");
+
+    let mut process = Command::new(&qemu_path)
+        .args([
+            "-machine",
+            "esp32",
+            "-nographic",
+            "-serial",
+            "mon:stdio",
+            "-drive",
+            &format!("file={},if=mtd,format=raw", image_path.display()),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let stdout = process
+        .stdout
+        .take()
+        .ok_or("Failed to capture stdout from QEMU")?;
+    let _guard = ProcessGuard(process);
+
+    monitor_test_output(stdout)
+}
+
+fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Find device
+    let port = match find_esp32_port() {
+        Some(p) => p,
+        None => {
+            let available = list_available_ports();
+            if !available.is_empty() {
+                eprintln!("Available serial ports:");
+                for port in &available {
+                    eprintln!("  {}", port);
+                }
+            }
+            return Err("No ESP32 device found. Check USB connection.".into());
+        }
+    };
+    println!("Found device: {}", port);
+
+    // Check if we need to reflash (binary changed since last flash)
+    if needs_reflash(test_binary) {
+        println!("\n=== Flashing to ESP32 ===\n");
+        flash_binary(test_binary, &port, CHIP).map_err(|e| format!("Flash failed: {}", e))?;
+        save_flash_hash(test_binary);
+    } else {
+        println!("\n=== Binary unchanged, skipping flash (reset only) ===\n");
+    }
+
+    // Monitor for test output (espflash monitor does a hard-reset by default)
+    println!("=== Monitoring test output ===\n");
+
+    let mut process =
+        start_monitor(&port).map_err(|e| format!("Failed to start monitor: {}", e))?;
+
+    let stdout = process
+        .stdout
+        .take()
+        .ok_or("Failed to capture stdout from espflash monitor")?;
+
+    let result = monitor_test_output(stdout);
+
+    // Kill espflash monitor gracefully before it panics from broken pipe
+    let _ = process.kill();
+    let _ = process.wait();
+
+    // Reset terminal after espflash monitor (it may leave terminal in raw mode)
+    reset_terminal();
+
+    result
+}
+
+/// Test execution state machine for context-aware crash detection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TestState {
+    /// Device is booting, before test framework starts.
+    Booting,
+    /// Test framework initialized ("running X tests" seen).
+    Initialized,
+    /// First actual test started running ("test ..." seen).
+    Running,
+}
+
+fn monitor_test_output(stdout: impl std::io::Read) -> Result<(), Box<dyn std::error::Error>> {
+    let mut reader = BufReader::new(stdout);
+
+    let start = Instant::now();
+    let timeout = Duration::from_secs(TEST_TIMEOUT_SECS);
+    let mut test_result: Option<bool> = None;
+    let mut test_state = TestState::Booting;
+    let mut crash_reason: Option<String> = None;
+
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+
+        if start.elapsed() > timeout {
+            eprintln!(
+                "\nTimeout: tests ran for more than {} seconds",
+                TEST_TIMEOUT_SECS
+            );
+            return Err("Test timeout".into());
+        }
+
+        // Read until newline, handling binary data gracefully
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) => break, // EOF
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Read error: {}", e);
+                break;
+            }
+        }
+
+        // Convert to string, replacing invalid UTF-8 with replacement char.
+        // Also strip \r characters (ESP32 uses \r\n line endings which cause display issues).
+        let line = String::from_utf8_lossy(&buf).trim().replace('\r', "");
+
+        // Skip empty lines and lines that are just garbage
+        if line.is_empty() || line.chars().all(|c| c == '\u{FFFD}' || c.is_control()) {
+            continue;
+        }
+
+        // Update test state based on output
+        if line.contains("running") && line.contains("tests") {
+            test_state = TestState::Initialized;
+        }
+        if test_state == TestState::Initialized && line.starts_with("test ") {
+            test_state = TestState::Running;
+        }
+
+        // Print test-relevant output (once initialized or running)
+        // Use explicit \r\n because espflash may leave terminal in raw mode where \n alone
+        // doesn't return to column 0.
+        if test_state != TestState::Booting {
+            print!("{}\r\n", line);
+            let _ = std::io::stdout().flush();
+        }
+
+        // Check for test completion
+        if line.contains("test result:") {
+            if line.contains("ok") && !line.contains("FAILED") {
+                test_result = Some(true);
+            } else {
+                test_result = Some(false);
+            }
+            break;
+        }
+
+        // Check for crash patterns with state context
+        if let Some(reason) = check_crash_pattern(&line, test_state) {
+            crash_reason = Some(reason);
+            test_result = Some(false);
+            break;
+        }
+    }
+
+    if let Some(reason) = crash_reason {
+        eprint!("\r\n*** TEST CRASHED: {} ***\r\n", reason);
+    }
+
+    print!("\r\n");
+    match test_result {
+        Some(true) => {
+            print!("=== All tests passed ===\r\n");
+            Ok(())
+        }
+        Some(false) => Err("Tests failed".into()),
+        None => Err("Could not determine test result".into()),
+    }
+}
+
+/// Check for crash patterns in output.
+///
+/// Some patterns (Guru Meditation, panic) are always crashes.
+/// Other patterns (WDT reset, reboot) are only crashes if tests have started running,
+/// since boot logs often show the previous reset reason.
+fn check_crash_pattern(line: &str, state: TestState) -> Option<String> {
+    // Immediate crash indicators - always a crash regardless of state
+    if line.contains("Guru Meditation Error") {
+        return Some("Guru Meditation Error (CPU exception)".to_string());
+    }
+    if line.contains("abort() was called") || line.contains("assert failed") {
+        return Some("Assertion/abort failure".to_string());
+    }
+    if line.contains("stack overflow") {
+        return Some("Stack overflow detected".to_string());
+    }
+    if line.contains("CORRUPTED") {
+        return Some("Stack corruption detected".to_string());
+    }
+    if line.contains("panic") && line.contains("occurred") {
+        return Some("Panic occurred".to_string());
+    }
+
+    // Reboot/reset patterns - only consider a crash if tests are running.
+    // Boot logs often show the previous reset reason (e.g., WDT_SYS_RESET from a prior run).
+    if state == TestState::Running {
+        if line.contains("WDT_SYS_RESET")
+            || line.contains("TG0WDT_SYS_RESET")
+            || line.contains("TG1WDT_SYS_RESET")
+        {
+            return Some("Watchdog timer reset (possible hang)".to_string());
+        }
+        // Use "rst:0x" to match ESP-IDF boot format specifically (e.g., "rst:0x1 (POWERON_RESET)")
+        if line.contains("Rebooting...") || line.starts_with("rst:0x") {
+            return Some("Device rebooted (crash detected)".to_string());
+        }
+    }
+    None
+}
+
+fn find_test_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let deps_dir = PathBuf::from(format!("target/{}/release/deps", RUST_TARGET));
+
+    if !deps_dir.exists() {
+        return Err(format!("Build output directory not found: {}", deps_dir.display()).into());
+    }
+
+    // Find the most recently modified test binary
+    let mut best_candidate: Option<(PathBuf, std::time::SystemTime)> = None;
+
+    for entry in std::fs::read_dir(&deps_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with("reticulum_rs_esp32-") && !name.contains('.') && path.is_file() {
+                let metadata = std::fs::metadata(&path)?;
+                // Must meet minimum size to be a real test binary
+                if metadata.len() > MIN_TEST_BINARY_SIZE {
+                    let modified = metadata.modified()?;
+                    match &best_candidate {
+                        None => best_candidate = Some((path, modified)),
+                        Some((_, best_time)) if modified > *best_time => {
+                            best_candidate = Some((path, modified));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    best_candidate
+        .map(|(path, _)| path)
+        .ok_or_else(|| format!("Test binary not found in {}", deps_dir.display()).into())
+}

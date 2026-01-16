@@ -28,6 +28,11 @@ ESP_IDF_SDKCONFIG_DEFAULTS = "config/sdkconfig.defaults"
 build-esp32 = ["build", "--bin", "node", "--release", "--target", "xtensa-esp32s3-espidf", "--features", "esp32"]
 flash-esp32 = ["run", "--bin", "flash-esp32"]
 # Run tests in QEMU (ESP32 environment without hardware)
-test-qemu = ["run", "--bin", "qemu-test-runner"]
+test-qemu = ["run", "--bin", "esp32-test-runner", "--", "--qemu"]
+# Run tests on real ESP32 hardware
+test-esp32 = ["run", "--bin", "esp32-test-runner", "--", "--hardware"]
+# Configure WiFi credentials on ESP32 (stored in NVS)
+# Usage: WIFI_SSID="MyNetwork" WIFI_PASSWORD="secret" cargo configure-wifi
+configure-wifi = ["run", "--bin", "flash-wifi-config"]
 # DANGER: Production flash with encryption - permanently burns eFuses!
 production-flash = ["run", "--bin", "production-flash"]

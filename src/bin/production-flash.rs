@@ -5,8 +5,12 @@
 //! Flash encryption burns eFuses on first boot. This cannot be undone.
 //! Only use for final production devices.
 
+use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_binary};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::{exit, Command};
+
+const CHIP: &str = "esp32";
 
 const WARNING: &str = r#"
 ================================================================================
@@ -75,29 +79,27 @@ fn main() {
         }
     }
 
-    eprintln!("\n=== Flashing to device ===\n");
+    // Auto-detect ESP32 port
+    let port = match find_esp32_port() {
+        Some(p) => p,
+        None => {
+            eprintln!("\nNo ESP32 device found. Check USB connection.");
+            exit(1);
+        }
+    };
+
+    eprintln!("\n=== Flashing to device ({}) ===\n", port);
     eprintln!("WARNING: First boot will burn eFuses permanently!\n");
 
-    let status = Command::new("espflash")
-        .args([
-            "flash",
-            "--release",
-            "target/xtensa-esp32-espidf/release/reticulum-rs-esp32",
-        ])
-        .status();
-
-    match status {
-        Ok(s) if s.success() => {
+    let binary_path = PathBuf::from("target/xtensa-esp32-espidf/release/reticulum-rs-esp32");
+    match flash_binary(&binary_path, &port, CHIP) {
+        Ok(()) => {
             eprintln!("\n=== Flash complete ===");
             eprintln!("Device will enable encryption on first boot.");
             eprintln!("DO NOT interrupt the first boot process!");
         }
-        Ok(_) => {
-            eprintln!("\nFlash failed!");
-            exit(1);
-        }
         Err(e) => {
-            eprintln!("\nFailed to run espflash: {}", e);
+            eprintln!("\nFlash failed: {}", e);
             exit(1);
         }
     }

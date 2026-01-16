@@ -211,12 +211,60 @@ mod tests {
     use crate::testnet::config::{DEFAULT_SERVER, SERVERS};
     use reticulum_rs_esp32_macros::esp32_test;
 
-    // Note: These tests require network access and will fail in QEMU.
-    // They are marked with #[ignore] for CI but can be run manually.
+    // Note: These tests require network access.
+    // On ESP32: Auto-connects to WiFi if credentials stored in NVS (via cargo configure-wifi)
+    // On host: Uses system network directly
+    // In QEMU: Skipped (no network emulation - would crash TCP/IP stack)
+
+    /// Wait for network to become available, with timeout.
+    /// Returns true if network is ready, false if timeout expired.
+    ///
+    /// On ESP32, this checks the global WIFI_CONNECTED flag which is set
+    /// by try_connect_wifi() when WiFi connects successfully. This is safer
+    /// than socket operations which can crash lwip in QEMU (no network emulation).
+    ///
+    /// NOTE: This only checks if WiFi was connected at initialization time.
+    /// It does NOT detect disconnections that occur after this returns.
+    /// Network operations should implement their own timeout and error handling.
+    fn wait_for_network(timeout_secs: u64) -> bool {
+        #[cfg(not(feature = "esp32"))]
+        {
+            let _ = timeout_secs; // Host always has network
+            true
+        }
+        #[cfg(feature = "esp32")]
+        {
+            use std::thread;
+            use std::time::{Duration, Instant};
+
+            let start = Instant::now();
+            let timeout = Duration::from_secs(timeout_secs);
+
+            while start.elapsed() < timeout {
+                // Check the global WiFi connection flag (set by lib.rs try_connect_wifi)
+                // This is safer than socket operations which crash lwip in QEMU
+                if crate::is_wifi_connected() {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            false
+        }
+    }
+
+    /// Default timeout for waiting for network (seconds)
+    const NETWORK_TIMEOUT_SECS: u64 = 10;
 
     #[esp32_test]
-    #[ignore] // Requires network
     fn test_connect_to_default_server() {
+        if !wait_for_network(NETWORK_TIMEOUT_SECS) {
+            info!(
+                "Skipping network test - network not available after {}s",
+                NETWORK_TIMEOUT_SECS
+            );
+            return;
+        }
+
         let transport = TestnetTransport::connect(DEFAULT_SERVER);
         assert!(
             transport.is_ok(),
@@ -230,8 +278,15 @@ mod tests {
     }
 
     #[esp32_test]
-    #[ignore] // Requires network
     fn test_connect_any() {
+        if !wait_for_network(NETWORK_TIMEOUT_SECS) {
+            info!(
+                "Skipping network test - network not available after {}s",
+                NETWORK_TIMEOUT_SECS
+            );
+            return;
+        }
+
         let transport = TestnetTransport::connect_any(SERVERS);
         assert!(
             transport.is_ok(),

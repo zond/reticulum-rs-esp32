@@ -21,4 +21,4 @@ mod storage;
 #[cfg(feature = "esp32")]
 pub use connection::{WifiError, WifiManager};
 #[cfg(feature = "esp32")]
-pub use storage::{clear_wifi_config, load_wifi_config, save_wifi_config};
+pub use storage::{clear_wifi_config, init_nvs, load_wifi_config, save_wifi_config};

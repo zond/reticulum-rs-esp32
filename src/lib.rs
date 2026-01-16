@@ -7,6 +7,8 @@ pub mod announce;
 pub mod ble;
 pub mod chat;
 pub mod config;
+#[cfg(not(feature = "esp32"))]
+pub mod host_utils;
 pub mod lora;
 pub mod message_queue;
 pub mod network;
@@ -36,6 +38,7 @@ pub use network::WifiNetwork;
 pub use network::HostNetwork;
 
 /// Initialize ESP-IDF for tests. Uses Once to ensure it only runs once.
+/// Also connects to WiFi if credentials are stored in NVS.
 /// This is a no-op on non-ESP32 targets.
 #[cfg(feature = "esp32")]
 pub fn ensure_esp_initialized() {
@@ -45,7 +48,94 @@ pub fn ensure_esp_initialized() {
     INIT.call_once(|| {
         esp_idf_svc::sys::link_patches();
         esp_idf_svc::log::EspLogger::initialize_default();
+
+        // Try to connect to WiFi if credentials are stored
+        // This enables network tests to run automatically
+        try_connect_wifi();
     });
+}
+
+/// Global flag indicating whether WiFi is connected.
+/// Used by network tests to skip if network isn't available.
+#[cfg(feature = "esp32")]
+static WIFI_CONNECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Check if WiFi is connected (ESP32 only).
+/// On host, always returns true (system network is available).
+///
+/// Uses Acquire ordering to ensure visibility of WiFi initialization side effects.
+#[cfg(feature = "esp32")]
+pub fn is_wifi_connected() -> bool {
+    WIFI_CONNECTED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[cfg(not(feature = "esp32"))]
+pub fn is_wifi_connected() -> bool {
+    true // Host always has network
+}
+
+/// Attempt to connect to WiFi using stored NVS credentials.
+/// Silently does nothing if no credentials are stored or connection fails.
+#[cfg(feature = "esp32")]
+fn try_connect_wifi() {
+    use log::info;
+    use std::sync::atomic::Ordering;
+
+    // Check for stored WiFi config
+    let config = match wifi::init_nvs() {
+        Ok(nvs) => wifi::load_wifi_config(&nvs),
+        Err(_) => return,
+    };
+
+    let config = match config {
+        Some(c) => c,
+        None => {
+            info!("No WiFi config in NVS - network tests will be skipped");
+            return;
+        }
+    };
+
+    info!("Found WiFi config for '{}', connecting...", config.ssid);
+
+    // Get peripherals for WiFi
+    let peripherals = match esp_idf_svc::hal::peripherals::Peripherals::take() {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("Could not take peripherals for WiFi: {:?}", e);
+            return;
+        }
+    };
+
+    let sysloop = match esp_idf_svc::eventloop::EspSystemEventLoop::take() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Could not take event loop for WiFi: {:?}", e);
+            return;
+        }
+    };
+
+    // Connect to WiFi
+    match wifi::WifiManager::new(peripherals.modem, sysloop) {
+        Ok(mut wifi_manager) => {
+            match wifi_manager.connect(&config) {
+                Ok(ip) => {
+                    info!("WiFi connected (IP: {}) - network tests enabled", ip);
+                    // Release ordering ensures WiFi initialization is visible to other threads
+                    WIFI_CONNECTED.store(true, Ordering::Release);
+                }
+                Err(e) => log::warn!("WiFi connection failed: {:?}", e),
+            }
+            // INTENTIONAL LEAK: Keep wifi_manager alive for the duration of the process.
+            // This is necessary because:
+            // 1. WifiManager holds references to singleton peripherals (modem, event loop)
+            // 2. These peripherals can only be taken once via Peripherals::take()
+            // 3. Dropping WifiManager would invalidate the WiFi connection
+            // 4. For test runners, WiFi must stay connected throughout all tests
+            // The ~20KB is acceptable for test infrastructure on 512KB SRAM.
+            std::mem::forget(wifi_manager);
+        }
+        Err(e) => log::warn!("Could not create WiFi manager: {:?}", e),
+    }
 }
 
 #[cfg(not(feature = "esp32"))]

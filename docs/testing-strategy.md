@@ -19,6 +19,9 @@ cargo test
 
 # Run tests in QEMU (ESP32 emulation)
 cargo test-qemu
+
+# Run tests on real hardware
+cargo test-esp32
 ```
 
 ## How It Works
@@ -46,14 +49,21 @@ fn my_test() {
 }
 ```
 
-### QEMU Test Runner
+### Unified Test Runner
 
-The `cargo test-qemu` command runs a host binary (`qemu-test-runner`) that:
-1. Builds tests for ESP32: `cargo test --no-run --target xtensa-esp32-espidf --features esp32 --release`
+The `esp32-test-runner` supports both QEMU emulation and real hardware:
+
+**QEMU** (`cargo test-qemu`):
+1. Builds tests: `cargo test --no-run --target xtensa-esp32-espidf --features esp32 --release`
 2. Creates flash image: `espflash save-image --merge`
 3. Runs QEMU with the image
 4. Parses output for test results
-5. Exits with appropriate code (0 = success, 1 = failure)
+
+**Hardware** (`cargo test-esp32`):
+1. Builds tests for ESP32 target
+2. Flashes to device via USB
+3. Monitors serial output for test results
+4. Exits with appropriate code (0 = success, 1 = failure)
 
 ## Writing Tests
 
@@ -128,7 +138,7 @@ macros/
 src/
 ├── lib.rs                  # ensure_esp_initialized()
 ├── bin/
-│   └── qemu-test-runner.rs # QEMU test orchestrator
+│   └── esp32-test-runner.rs # Unified QEMU/hardware test runner
 └── */mod.rs                # Modules with #[cfg(test)] tests
 ```
 
@@ -138,19 +148,23 @@ src/
 |--------|-------|-------------|
 | `announce/cache.rs` | 16 | LRU announce cache for deduplication |
 | `ble/fragmentation.rs` | 27 | BLE packet fragmentation/reassembly |
-| `chat.rs` | 10 | Serial chat command parsing |
+| `chat.rs` | 15 | Serial chat command parsing |
 | `config/wifi.rs` | 26 | WiFi credential validation |
 | `lora/airtime.rs` | 14 | LoRa time-on-air calculations |
 | `lora/config.rs` | 4 | Region configuration |
 | `lora/csma.rs` | 23 | CSMA/CA collision avoidance |
 | `lora/duty_cycle.rs` | 8 | Token bucket duty cycle limiter |
-| `network/stats_server.rs` | 4 | Stats HTTP endpoint |
+| `message_queue.rs` | 10 | Message queuing for pending links |
+| `network/stats_server.rs` | 5 | Stats HTTP endpoint |
 | `network/host.rs` | 3 | Host network provider |
-| `persistence_host.rs` | 2 | Identity file storage |
+| `persistence.rs` | 6 | Identity storage (ESP32 NVS) |
+| `persistence_host.rs` | 2 | Identity file storage (host) |
 | `routing/path_table.rs` | 17 | Routing table for destination paths |
 | `testnet/config.rs` | 4 | Testnet server configuration |
-| `testnet/transport.rs` | 1 | TCP transport (+ 2 ignored network tests) |
-| **Total** | **159** | Unit tests (+ 9 doc tests) |
+| `testnet/transport.rs` | 3 | TCP transport (network tests require WiFi) |
+| `wifi/storage.rs` | 6 | WiFi credential storage (ESP32 NVS) |
+| **Host Total** | **178** | Unit tests (+ 9 doc tests) |
+| **ESP32/QEMU Total** | **185** | Unit tests |
 
 ## Testing Environments
 
@@ -179,6 +193,31 @@ Tests ESP32 code without real hardware. Uses plain ESP32 (not S3) due to QEMU st
 **What cannot be tested:**
 - WiFi/BLE (no radio emulation)
 - LoRa (no SX1262 emulation)
+
+### Hardware Testing
+
+Tests on real ESP32 hardware via `cargo test-esp32`. Required for WiFi-dependent tests.
+
+**Network Tests Setup:**
+
+Network tests (testnet connectivity) require WiFi. The test system auto-detects WiFi credentials stored in NVS:
+
+```bash
+# One-time setup: store WiFi credentials
+WIFI_SSID="MyNetwork" WIFI_PASSWORD="secret" cargo configure-wifi
+```
+
+On subsequent test runs, `ensure_esp_initialized()` automatically:
+1. Checks NVS for stored WiFi config
+2. Connects to WiFi if credentials exist
+3. Enables network tests (testnet transport, etc.)
+
+**What can be tested (with WiFi configured):**
+- Testnet TCP connectivity
+- DNS resolution
+- Full network stack
+
+**Without WiFi:** Network tests still run but will fail connectivity checks.
 
 ## Best Practices
 

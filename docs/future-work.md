@@ -23,8 +23,8 @@ BLE fragmentation (`src/ble/fragmentation.rs`) is complete. Need to:
 ### 3. Hardware Testing
 
 Flash to actual ESP32 hardware and verify:
-- WiFi connection
-- Testnet connectivity
+- ✅ WiFi connection - Auto-configures from NVS (`cargo configure-wifi`)
+- Testnet connectivity (requires WiFi config first)
 - Stats endpoint accessibility
 - Identity persistence across reboots
 
@@ -95,6 +95,20 @@ When implemented, the BLE configuration should allow:
 ## Interrupt-Driven Radio
 
 The LoRa radio driver currently uses polling. Switching to DIO1 interrupt would improve power efficiency. See TODO in `src/lora/radio.rs:138`.
+
+## Test Infrastructure Improvements
+
+From code review (2026-01):
+
+| Improvement | Description | Priority |
+|-------------|-------------|----------|
+| Use Cargo JSON metadata | Replace heuristic binary detection in test runner with `--message-format=json` | Medium |
+| Configurable flash size | Hardcoded 4MB flash size in test runner | Low |
+
+**Resolved (2026-01)**:
+- ✅ Cross-platform monitor - Now uses `espflash monitor --non-interactive` instead of macOS-specific `script` wrapper
+- ✅ Crash detection state machine - Uses `TestState` enum (Booting/Initialized/Running) for context-aware crash detection
+- ✅ Port detection glob optimization - Uses specific `/dev/ttyUSB*` and `/dev/ttyACM*` patterns instead of `/dev/tty*` filtering
 
 ## Chat Interface Improvements
 

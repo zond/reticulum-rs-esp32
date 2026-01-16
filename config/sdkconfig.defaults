@@ -1,6 +1,10 @@
 # Rust often needs a bit of extra main task stack size compared to C
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8000
 
+# Extend watchdog timeout for QEMU (crypto operations are slow in emulation)
+# Default is 5 seconds, increase to 30 for QEMU compatibility
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+
 # Increase pthread stack size for crypto operations (identity generation)
 # Default is 3072, but reticulum identity crypto needs more
 CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=8192

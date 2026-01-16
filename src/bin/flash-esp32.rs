@@ -2,7 +2,11 @@
 //!
 //! Usage: cargo run --bin flash-esp32
 
+use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_and_monitor};
+use std::path::PathBuf;
 use std::process::{exit, Command};
+
+const CHIP: &str = "esp32s3";
 
 fn main() {
     println!("=== Building node for ESP32-S3 ===\n");
@@ -25,18 +29,20 @@ fn main() {
         exit(1);
     }
 
-    println!("\n=== Flashing to device ===\n");
+    // Auto-detect ESP32 port
+    let port = match find_esp32_port() {
+        Some(p) => p,
+        None => {
+            eprintln!("\nNo ESP32 device found. Check USB connection.");
+            exit(1);
+        }
+    };
 
-    let status = Command::new("espflash")
-        .args([
-            "flash",
-            "--monitor",
-            "target/xtensa-esp32s3-espidf/release/node",
-        ])
-        .status();
+    println!("\n=== Flashing to device ({}) ===\n", port);
 
-    if !matches!(status, Ok(s) if s.success()) {
-        eprintln!("\nFlash failed!");
+    let binary_path = PathBuf::from("target/xtensa-esp32s3-espidf/release/node");
+    if let Err(e) = flash_and_monitor(&binary_path, &port, CHIP) {
+        eprintln!("\nFlash failed: {}", e);
         exit(1);
     }
 }

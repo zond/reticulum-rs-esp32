@@ -22,13 +22,23 @@ path = "src/bin/flash-esp32.rs"
 test = false
 
 [[bin]]
-name = "qemu-test-runner"
-path = "src/bin/qemu-test-runner.rs"
+name = "esp32-test-runner"
+path = "src/bin/esp32-test-runner.rs"
 test = false
 
 [[bin]]
 name = "production-flash"
 path = "src/bin/production-flash.rs"
+test = false
+
+[[bin]]
+name = "configure-wifi"
+path = "src/bin/configure-wifi.rs"
+test = false
+
+[[bin]]
+name = "flash-wifi-config"
+path = "src/bin/flash-wifi-config.rs"
 test = false
 
 [features]
@@ -84,6 +94,9 @@ zeroize = { version = "1.7", features = ["derive"] }
 # HTTP server for stats endpoint (works on both host and ESP32)
 tiny_http = "0.12"
 
+# File globbing (for test runner port detection)
+glob = "0.3"
+
 [dev-dependencies]
 # Test macro for #[esp32_test]
 reticulum-rs-esp32-macros = { path = "macros" }
@@ -98,6 +111,7 @@ opt-level = "s"
 debug = true
 opt-level = "z"
 
-# Host-only dependencies (signal handling for Ctrl+C)
+# Host-only dependencies (signal handling for Ctrl+C, test runner hashing)
 [target.'cfg(not(target_os = "espidf"))'.dependencies]
 tokio = { version = "1.44", features = ["macros", "signal"] }
+sha2 = "0.10"
