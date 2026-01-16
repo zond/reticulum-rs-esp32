@@ -22,15 +22,17 @@ use super::config::{
 use super::csma::{Csma, CsmaConfig, CsmaResult};
 use super::{calculate_airtime_us, DutyCycleLimiter, LoRaParams};
 use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::gpio::{Gpio1, Gpio10, Gpio4, Gpio5, Input, Output, PinDriver};
+use esp_idf_hal::gpio::{Gpio1, Gpio10, Gpio4, Gpio5, Input, InterruptType, Output, PinDriver};
 use esp_idf_hal::peripheral::Peripheral;
 use esp_idf_hal::spi::config::Config as SpiConfig;
 use esp_idf_hal::spi::config::DriverConfig;
 use esp_idf_hal::spi::{SpiDeviceDriver, SpiDriver, SPI2};
+use esp_idf_hal::task::queue::Queue;
 use esp_idf_hal::units::FromValueType;
 use log::{debug, info, warn};
 use regiface::{Command, NoParameters, ToByteArray};
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 use sx1262::{
     ClearIrqStatus, Device, DeviceSelect, DioIrqConfig, GetIrqStatus, GetPacketStatus,
@@ -38,6 +40,42 @@ use sx1262::{
     RxMode, SetDioIrqParams, SetPaConfig, SetPacketParams, SetPacketType, SetRfFrequency, SetRx,
     SetStandby, SetTx, SetTxParams, StandbyConfig, Timeout, TxParams,
 };
+
+/// Wrapper around a FreeRTOS queue used as a binary semaphore for ISR-to-task signaling.
+///
+/// Uses `esp_idf_hal::task::queue::Queue<()>` which is Send+Sync and has ISR-safe
+/// operations built in. The ISR calls `send_back((), 0)` to signal, and the waiting
+/// task calls `recv_front(timeout)` to wait.
+///
+/// Uses capacity 2 to handle rapid interrupt bursts without losing signals.
+#[derive(Clone)]
+struct IrqSignal(Arc<Queue<()>>);
+
+impl IrqSignal {
+    /// Create a new signal (binary semaphore equivalent).
+    fn new() -> Self {
+        // Capacity 2 handles rapid bursts (e.g., spurious + real interrupt)
+        Self(Arc::new(Queue::new(2)))
+    }
+
+    /// Signal from ISR context (non-blocking).
+    ///
+    /// Errors are ignored because a full queue means signals are already pending.
+    fn signal_from_isr(&self) {
+        let _ = self.0.send_back((), 0);
+    }
+
+    /// Wait for signal with timeout in milliseconds.
+    ///
+    /// Returns true if signaled, false on timeout.
+    fn wait(&self, timeout_ms: u32) -> bool {
+        // Convert ms to FreeRTOS ticks using the configured tick rate
+        // tick_period_ms = 1000 / TICK_RATE_HZ (e.g., 10ms for 100Hz)
+        use esp_idf_hal::delay::TICK_RATE_HZ;
+        let ticks = (timeout_ms as u64 * TICK_RATE_HZ as u64 / 1000) as u32;
+        self.0.recv_front(ticks).is_some()
+    }
+}
 
 /// Maximum time to wait for radio to become ready (ms).
 const BUSY_TIMEOUT_MS: u32 = 1000;
@@ -134,14 +172,14 @@ pub struct LoRaRadio<'d> {
     device: Device<SpiDeviceDriver<'d, SpiDriver<'d>>>,
     reset: PinDriver<'d, Gpio5, Output>,
     busy: PinDriver<'d, Gpio4, Input>,
-    // DIO1 stored for future interrupt-driven RX/TX (currently using polling).
-    // TODO: Implement interrupt handler for better power efficiency.
-    #[allow(dead_code)]
+    /// DIO1 pin for interrupt-driven RX/TX completion.
     dio1: PinDriver<'d, Gpio1, Input>,
     region: Region,
     duty_cycle: DutyCycleLimiter,
     csma: Csma,
     initialized: bool,
+    /// Signal for interrupt-driven waiting (ISR signals when DIO1 fires).
+    irq_signal: IrqSignal,
 }
 
 impl<'d> LoRaRadio<'d> {
@@ -178,6 +216,7 @@ impl<'d> LoRaRadio<'d> {
 
         let duty_cycle = region.duty_cycle_limiter();
         let csma = Csma::new(CsmaConfig::default());
+        let irq_signal = IrqSignal::new();
 
         Ok(Self {
             device,
@@ -188,6 +227,7 @@ impl<'d> LoRaRadio<'d> {
             duty_cycle,
             csma,
             initialized: false,
+            irq_signal,
         })
     }
 
@@ -276,6 +316,9 @@ impl<'d> LoRaRadio<'d> {
         // Configure DIO1 for TX done and RX done interrupts
         self.configure_irq()?;
 
+        // Set up interrupt-driven notification for DIO1
+        self.setup_dio1_interrupt()?;
+
         // Seed CSMA RNG from hardware random number generator
         let seed = unsafe { esp_idf_sys::esp_random() };
         self.csma.seed(seed);
@@ -306,6 +349,31 @@ impl<'d> LoRaRadio<'d> {
             })
             .map_err(RadioError::Command)?;
         self.wait_busy()?;
+        Ok(())
+    }
+
+    /// Set up DIO1 interrupt for efficient TX/RX completion detection.
+    ///
+    /// Instead of polling the radio every 1ms, we use a GPIO interrupt on DIO1
+    /// which the SX1262 pulses on TX_DONE, RX_DONE, and TIMEOUT events.
+    fn setup_dio1_interrupt(&mut self) -> Result<(), RadioError> {
+        self.dio1
+            .set_interrupt_type(InterruptType::PosEdge)
+            .map_err(RadioError::Gpio)?;
+
+        let signal = self.irq_signal.clone();
+
+        // SAFETY: The signal is Arc-wrapped and Queue::send_back with timeout 0
+        // is documented as ISR-safe. The subscription is cleaned up in Drop.
+        unsafe {
+            self.dio1
+                .subscribe(move || signal.signal_from_isr())
+                .map_err(RadioError::Gpio)?;
+        }
+
+        self.dio1.enable_interrupt().map_err(RadioError::Gpio)?;
+
+        debug!("DIO1 interrupt configured for TX/RX completion");
         Ok(())
     }
 
@@ -570,12 +638,18 @@ impl<'d> LoRaRadio<'d> {
         Ok(Some(ReceivedPacket { data, rssi, snr }))
     }
 
-    /// Wait for TX to complete.
+    /// Wait for TX to complete using interrupt-driven signaling.
+    ///
+    /// Blocks until DIO1 fires (TX_DONE) or timeout expires.
     fn wait_tx_done(&mut self) -> Result<(), RadioError> {
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_secs(TX_TIMEOUT_SECS);
+        let timeout_ms = (TX_TIMEOUT_SECS * 1000) as u32;
 
         loop {
+            if !self.irq_signal.wait(timeout_ms) {
+                return Err(RadioError::Timeout);
+            }
+
+            // Read IRQ status before re-enabling interrupt to avoid race condition
             self.wait_busy()?;
             let irq = self
                 .device
@@ -588,43 +662,51 @@ impl<'d> LoRaRadio<'d> {
                         irq_mask: IrqMask::all(),
                     })
                     .map_err(RadioError::Command)?;
+                // Re-enable interrupt after clearing source
+                self.dio1.enable_interrupt().map_err(RadioError::Gpio)?;
                 return Ok(());
             }
 
-            if start.elapsed() > timeout {
-                return Err(RadioError::Timeout);
-            }
-
-            FreeRtos::delay_ms(1);
+            // Spurious interrupt - re-enable and continue waiting
+            self.dio1.enable_interrupt().map_err(RadioError::Gpio)?;
         }
     }
 
-    /// Wait for RX to complete.
+    /// Wait for RX to complete using interrupt-driven signaling.
+    ///
+    /// Blocks until DIO1 fires (RX_DONE or TIMEOUT) or software timeout expires.
     fn wait_rx_done(&mut self, timeout_ms: u32) -> Result<IrqMask, RadioError> {
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_millis(timeout_ms as u64);
+        // Add 100ms margin for software overhead
+        let wait_timeout_ms = timeout_ms.saturating_add(100);
 
         loop {
+            if !self.irq_signal.wait(wait_timeout_ms) {
+                return Err(RadioError::Timeout);
+            }
+
+            // Read IRQ status before re-enabling interrupt to avoid race condition
             self.wait_busy()?;
             let irq = self
                 .device
                 .execute_command(GetIrqStatus)
                 .map_err(RadioError::Command)?;
 
-            if irq.irq_mask.contains(IrqMask::RX_DONE) || irq.irq_mask.contains(IrqMask::TIMEOUT) {
+            let done =
+                irq.irq_mask.contains(IrqMask::RX_DONE) || irq.irq_mask.contains(IrqMask::TIMEOUT);
+
+            if done {
                 self.device
                     .execute_command(ClearIrqStatus {
                         irq_mask: IrqMask::all(),
                     })
                     .map_err(RadioError::Command)?;
+                // Re-enable interrupt after clearing source
+                self.dio1.enable_interrupt().map_err(RadioError::Gpio)?;
                 return Ok(irq.irq_mask);
             }
 
-            if start.elapsed() > timeout {
-                return Err(RadioError::Timeout);
-            }
-
-            FreeRtos::delay_ms(1);
+            // Spurious interrupt - re-enable and continue waiting
+            self.dio1.enable_interrupt().map_err(RadioError::Gpio)?;
         }
     }
 
@@ -636,6 +718,21 @@ impl<'d> LoRaRadio<'d> {
     /// Get the region this radio is configured for.
     pub fn region(&self) -> Region {
         self.region
+    }
+}
+
+impl<'d> Drop for LoRaRadio<'d> {
+    fn drop(&mut self) {
+        // Clean up interrupt subscription to prevent dangling ISR callback
+        if let Err(e) = self.dio1.disable_interrupt() {
+            warn!("Failed to disable DIO1 interrupt during cleanup: {:?}", e);
+        }
+        if let Err(e) = self.dio1.unsubscribe() {
+            warn!(
+                "Failed to unsubscribe from DIO1 interrupt during cleanup: {:?}",
+                e
+            );
+        }
     }
 }
 

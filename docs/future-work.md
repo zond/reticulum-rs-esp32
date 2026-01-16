@@ -94,7 +94,7 @@ When implemented, the BLE configuration should allow:
 
 ## Interrupt-Driven Radio
 
-The LoRa radio driver currently uses polling. Switching to DIO1 interrupt would improve power efficiency. See TODO in `src/lora/radio.rs:138`.
+✅ **Resolved (2026-01)** - The LoRa radio driver now uses interrupt-driven waiting instead of polling. DIO1 is configured for positive edge interrupts, and `wait_tx_done()` / `wait_rx_done()` block on a FreeRTOS notification instead of polling every 1ms. See `src/lora/radio.rs` and [docs/interrupt-driven-radio-plan.md](interrupt-driven-radio-plan.md) for implementation details.
 
 ## Test Infrastructure Improvements
 
