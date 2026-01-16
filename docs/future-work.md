@@ -92,10 +92,6 @@ When implemented, the BLE configuration should allow:
 - Configuring DHT bootstrap nodes
 - Setting local mesh identifier
 
-## Stats HTTP Endpoint
-
-✅ **Implemented** - See `src/network/stats_server.rs`. Available at `http://localhost:8080/stats`.
-
 ## Interrupt-Driven Radio
 
 The LoRa radio driver currently uses polling. Switching to DIO1 interrupt would improve power efficiency. See TODO in `src/lora/radio.rs:138`.
@@ -106,24 +102,11 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 
 ### Known Limitations
 
-1. **Stdin blocking on ESP32** - The stdin reader uses `spawn_blocking` which cannot be cancelled mid-read. On ESP32, the task runs forever if no input arrives. No clean shutdown mechanism exists. (See `src/bin/node.rs:298`)
+1. **Stdin blocking on ESP32** - The stdin reader uses `spawn_blocking` which cannot be cancelled mid-read. On ESP32, the task runs forever if no input arrives. No clean shutdown mechanism exists. (See `src/bin/node.rs:461`)
 
-2. **Link activation delay** - ✅ Fixed: Messages sent to pending links are now queued and automatically sent when the link activates. See `MAX_QUEUED_MESSAGES_PER_DEST` in `src/bin/node.rs`.
+2. **Linear search for hash prefix** - `get_destination()` does O(n) search when matching by hash prefix. With MAX_KNOWN_DESTINATIONS=100, this is acceptable but could be improved with a trie.
 
-3. **Linear search for hash prefix** - `get_destination()` does O(n) search when matching by hash prefix. With MAX_KNOWN_DESTINATIONS=100, this is acceptable but could be improved with a trie.
-
-### Completed Improvements
-
-| Improvement | Description |
-|-------------|-------------|
-| LRU cache eviction | Evicts oldest when destination cache is full |
-| Link state checking | Check if link is activated before sending |
-| Extract link helper | DRY "get or create link" pattern |
-| Inbound link cleanup | Remove closed inbound links from cache |
-| Message queueing | Queue messages for pending links, send on activation |
-| Queue message TTL | Expire queued messages after 60s to prevent stale sends |
-
-### Remaining Improvements
+### Potential Improvements
 
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
@@ -131,62 +114,3 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 | O(1) LRU eviction | Replace O(n) scan with doubly-linked list | Low |
 | Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |
 
----
-
-## Code Quality Improvements
-
-Quality issues identified during code review. Grouped by priority.
-
-### High Priority
-
-All high priority code quality issues have been addressed:
-- ✅ Network task extracted to `spawn_network_task()` function
-- ✅ Lock ordering violation fixed in `LinkEvent::Closed` handler
-- ✅ Queue TTL logic extracted to `src/message_queue.rs` with 7 tests
-
-### Medium Priority
-
-All medium priority code quality issues have been addressed:
-- ✅ Chat state tests completed with fixtures (`src/chat.rs:329-523`)
-- ✅ Hash formatting fixed to use `AddressHash.to_hex_string()` (`src/chat.rs:46-51`)
-- Consistent lock variable names skipped (existing pattern is clear enough)
-
-### Low Priority
-
-All low priority code quality issues have been addressed:
-- ✅ Magic numbers documented with rationale (`src/bin/node.rs:54-72`, `src/message_queue.rs:8-18`)
-- ✅ TTL boundary tests added (`src/message_queue.rs:130-153`)
-- ✅ Lock ordering docs clarified with examples (`src/bin/node.rs:20-37`)
-- ✅ Queue metrics added to NodeStats (`src/network/stats_server.rs:103-135`, wired in `src/bin/node.rs`)
-  - Tracks `queued_messages`, `expired_messages`, `dropped_on_close`
-  - Uses `saturating_sub` to prevent counter underflow
-- Link event handlers reviewed - not merged (minimal structural overlap, different semantics for Activated/Closed handlers)
-
----
-
-## Documentation Improvements
-
-Issues identified during documentation review.
-
-### High Priority
-
-All high priority documentation issues have been addressed:
-- ✅ Skill references in CLAUDE.md made conditional
-- ✅ Test count verified (166 after message_queue module added)
-- ✅ Risk table in research-findings.md updated
-
-### Medium Priority
-
-All medium priority documentation issues have been addressed:
-- ✅ Testing docs reviewed - structure is appropriate (README concise, testing-strategy.md detailed)
-- ✅ Memory constraints section added to README with link to memory-analysis.md
-- ✅ Status summary added to implementation-guide.md (consolidated, not separate file)
-- ✅ Section 5 already has clear table summary at top
-
-### Low Priority
-
-All low priority documentation issues have been addressed:
-- ✅ Architecture diagram added to README
-- ✅ Cross-references reviewed - patterns are consistent (relative for internal, full URLs for external)
-- ✅ Code examples reviewed - have good context via section headers, doc comments, and task lists
-- ✅ Timestamps removed from docs (git history is authoritative)

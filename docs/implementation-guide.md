@@ -26,7 +26,7 @@ Detailed implementation plans for the ESP32 transport node.
 | Supporting (cache, routing, etc.) | ✅ Complete | See section 5 |
 | **Hardware Testing** | ❌ Pending | Not yet tested on device |
 
-**Test count**: 166 tests (run with `cargo test`)
+**Test count**: 176+ tests (run with `cargo test`)
 
 ---
 
@@ -629,47 +629,35 @@ Single endpoint returning JSON:
 GET /stats HTTP/1.1
 ```
 
-Response:
+Response (actual implementation):
 ```json
 {
   "uptime_secs": 3600,
-  "identity_hash": "a1b2c3d4...",
+  "identity_hash": "/a1b2c3d4.../",
   "interfaces": {
-    "lora": {
-      "tx_packets": 150,
-      "rx_packets": 230,
-      "tx_bytes": 45000,
-      "rx_bytes": 69000,
-      "duty_cycle_remaining_pct": 87.5,
-      "heard_stations_1h": 5
-    },
-    "ble": {
-      "heard_stations_1h": 3,
-      "tx_packets": 50,
-      "rx_packets": 45,
-      "tx_bytes": 15000,
-      "rx_bytes": 13500
-    },
-    "wifi": {
-      "connected": true,
-      "tx_packets": 500,
-      "rx_packets": 480,
-      "tx_bytes": 150000,
-      "rx_bytes": 144000
-    }
+    "lora": { "tx": 150, "rx": 230 },
+    "ble": { "tx": 50, "rx": 45 },
+    "testnet": { "tx": 500, "rx": 480 }
   },
   "routing": {
-    "known_destinations": 12,
+    "announce_cache_size": 25,
     "path_table_size": 8,
-    "announce_cache_size": 25
+    "known_destinations": 12
+  },
+  "queue": {
+    "queued_messages": 3,
+    "expired_messages": 12,
+    "dropped_on_close": 5
   }
 }
 ```
 
-**Notes on peer tracking:**
-- **LoRa/BLE**: "Heard stations" - count of unique source hashes seen in the last hour
-- BLE connections are transient (connect, send, disconnect), so tracking "heard" is more meaningful than connection count
-- This gives a consistent view of mesh reachability across both radio interfaces
+**Queue metrics** (for ESP32 memory monitoring):
+- `queued_messages`: Current count of messages waiting for link establishment
+- `expired_messages`: Cumulative count of messages that expired (TTL exceeded)
+- `dropped_on_close`: Cumulative count of messages lost when links closed unexpectedly
+
+These help identify memory pressure from slow link establishment or excessive queueing.
 
 ### Implementation Plan
 
