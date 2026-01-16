@@ -153,15 +153,14 @@ All medium priority code quality issues have been addressed:
 
 ### Low Priority
 
-| Issue | Location | Description |
-|-------|----------|-------------|
-| Merge link event handlers | `src/bin/node.rs:240-340` | Inbound/outbound handlers have structural overlap |
-| Add queue metrics to NodeStats | `src/bin/node.rs` | Track queue_size, expired_messages for ESP32 memory monitoring |
-
-Completed low priority items:
+All low priority code quality issues have been addressed:
 - ✅ Magic numbers documented with rationale (`src/bin/node.rs:54-72`, `src/message_queue.rs:8-18`)
 - ✅ TTL boundary tests added (`src/message_queue.rs:130-153`)
 - ✅ Lock ordering docs clarified with examples (`src/bin/node.rs:20-37`)
+- ✅ Queue metrics added to NodeStats (`src/network/stats_server.rs:103-135`, wired in `src/bin/node.rs`)
+  - Tracks `queued_messages`, `expired_messages`, `dropped_on_close`
+  - Uses `saturating_sub` to prevent counter underflow
+- Link event handlers reviewed - not merged (minimal structural overlap, different semantics for Activated/Closed handlers)
 
 ---
 

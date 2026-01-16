@@ -172,6 +172,13 @@ fn spawn_network_task(
 
                     if total_expired > 0 {
                         debug!("Expired {} stale queued message(s)", total_expired);
+                        stats.queue.expired_messages.fetch_add(total_expired, Ordering::Relaxed);
+                        // Use saturating_sub to prevent underflow in case of race conditions
+                        stats.queue.queued_messages.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |val| Some(val.saturating_sub(total_expired)),
+                        ).ok();
                     }
                 }
 
@@ -239,6 +246,7 @@ fn spawn_network_task(
                                     pending.remove(&event.id).unwrap_or_default()
                                 };
 
+                                let total_queued = messages.len();
                                 if messages.is_empty() {
                                     continue;
                                 }
@@ -253,7 +261,16 @@ fn spawn_network_task(
                                         expired.len(),
                                         event.id
                                     );
+                                    stats.queue.expired_messages.fetch_add(expired.len(), Ordering::Relaxed);
                                 }
+
+                                // Update queued_messages count (all removed from queue)
+                                // Use saturating_sub to prevent underflow in case of race conditions
+                                stats.queue.queued_messages.fetch_update(
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                    |val| Some(val.saturating_sub(total_queued)),
+                                ).ok();
 
                                 if valid.is_empty() {
                                     continue;
@@ -314,6 +331,13 @@ fn spawn_network_task(
                                 drop(links_guard);
 
                                 if dropped_count > 0 {
+                                    stats.queue.dropped_on_close.fetch_add(dropped_count, Ordering::Relaxed);
+                                    // Use saturating_sub to prevent underflow in case of race conditions
+                                    stats.queue.queued_messages.fetch_update(
+                                        Ordering::Relaxed,
+                                        Ordering::Relaxed,
+                                        |val| Some(val.saturating_sub(dropped_count)),
+                                    ).ok();
                                     print_chat_with_prompt(&format!(
                                         "Link closed, {} queued message(s) dropped",
                                         dropped_count
@@ -615,6 +639,7 @@ async fn handle_command(
                         return;
                     }
                     queue.push(QueuedMessage::new(text));
+                    stats.queue.queued_messages.fetch_add(1, Ordering::Relaxed);
                     let queue_len = queue.len();
                     drop(pending);
                     print_chat(&format!(
