@@ -39,8 +39,9 @@
 //!   - Implementing a physical button requirement to enable configuration mode
 
 use super::wifi::{ConfigCommand, WifiConfig, WifiStatus, MAX_PASSWORD_LEN, MAX_SSID_LEN};
+use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp32_nimble::utilities::BleUuid;
-use esp32_nimble::{uuid128, BLEDevice, BLEServer, NimbleProperties};
+use esp32_nimble::{uuid128, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
@@ -73,6 +74,8 @@ const DEVICE_NAME_CONFIGURED: &str = "Reticulum-Node";
 pub struct WifiConfigService {
     /// Current WiFi status.
     status: Arc<Mutex<WifiStatus>>,
+    /// Status characteristic for notifications (uses NimBLE's Mutex).
+    status_char: Arc<NimbleMutex<BLECharacteristic>>,
     /// Pending SSID (written but not yet connected).
     pending_ssid: Arc<Mutex<String>>,
     /// Pending password.
@@ -102,6 +105,8 @@ impl WifiConfigService {
             let s = status_clone.lock().unwrap();
             char.set_value(s.to_ble_string().as_bytes());
         });
+        // Store reference for notifications
+        let status_char_ref = status_char.clone();
 
         // SSID characteristic (Read + Write)
         let ssid_clone = pending_ssid.clone();
@@ -167,6 +172,7 @@ impl WifiConfigService {
 
         Self {
             status,
+            status_char: status_char_ref,
             pending_ssid,
             pending_password,
             pending_command,
@@ -204,8 +210,12 @@ impl WifiConfigService {
     /// Update WiFi status and notify connected clients.
     pub fn set_status(&self, new_status: WifiStatus) {
         let mut status = self.status.lock().unwrap();
-        *status = new_status;
-        // TODO: Notify connected clients via characteristic notification
+        *status = new_status.clone();
+
+        // Notify connected clients of the status change
+        let mut char = self.status_char.lock();
+        char.set_value(new_status.to_ble_string().as_bytes());
+        char.notify();
     }
 
     /// Take pending command if available.
