@@ -7,7 +7,7 @@ pub mod announce;
 pub mod ble;
 pub mod chat;
 pub mod config;
-#[cfg(not(feature = "esp32"))]
+#[cfg(not(target_os = "espidf"))]
 pub mod host_utils;
 pub mod lora;
 pub mod message_queue;
@@ -20,6 +20,10 @@ pub mod routing;
 pub mod testnet;
 pub mod wifi;
 
+// Node abstraction for testable networking (host only)
+#[cfg(not(feature = "esp32"))]
+pub mod node;
+
 // Re-export commonly used items
 pub use announce::{AnnounceCache, AnnounceCacheConfig, AnnounceEntry};
 pub use ble::{Fragment, FragmentError, Fragmenter, Reassembler};
@@ -30,6 +34,9 @@ pub use message_queue::{QueuedMessage, MAX_QUEUED_MESSAGES_PER_DEST, QUEUE_MESSA
 pub use network::{NetworkError, NetworkProvider, NodeStats, StatsServer, DEFAULT_STATS_PORT};
 pub use routing::{InterfaceType, PathEntry, PathTable, PathTableConfig, RoutingMetrics};
 pub use testnet::{TestnetServer, TestnetTransport, TransportError, DEFAULT_SERVER, SERVERS};
+
+#[cfg(not(feature = "esp32"))]
+pub use node::{IncomingMessage, LinkActivationEvent, Node, NodeError};
 
 #[cfg(feature = "esp32")]
 pub use network::WifiNetwork;

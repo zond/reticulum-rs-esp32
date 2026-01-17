@@ -163,7 +163,8 @@ src/
 | `testnet/config.rs` | 4 | Testnet server configuration |
 | `testnet/transport.rs` | 3 | TCP transport (network tests require WiFi) |
 | `wifi/storage.rs` | 6 | WiFi credential storage (ESP32 NVS) |
-| **Host Total** | **178** | Unit tests (+ 9 doc tests) |
+| `node.rs` | 1 | Two-node communication (host only, ignored - testnet routing issue) |
+| **Host Total** | **178** | Unit tests (1 ignored) + 9 doc tests |
 | **ESP32/QEMU Total** | **185** | Unit tests |
 
 ## Testing Environments
@@ -258,6 +259,30 @@ pub mod config;
 #[cfg(feature = "esp32")]
 pub mod storage;
 ```
+
+## Integration Tests
+
+End-to-end integration tests validate the full communication path via the testnet.
+
+**Two-Node Communication Test** (`src/node.rs`):
+- Creates two Node instances (each with its own Transport and identity)
+- Both nodes connect to testnet
+- Both announce their destinations
+- Node A receives Node B's announce
+- Node A creates link to Node B and sends message
+- Verifies Node B receives the correct message
+
+This test is marked `#[ignore]` due to a testnet routing issue: when two nodes connect from the same IP address, the testnet server appears unable to route directed packets (like link requests) to the correct client. Broadcast packets (announces) work fine.
+
+Run manually with:
+
+```bash
+cargo test test_two_node -- --ignored --nocapture
+```
+
+The `Node` abstraction in `src/node.rs` provides a testable node interface that encapsulates Transport, identity, destination, and event processing. This design allows multiple nodes to operate independently in tests once the routing issue is resolved.
+
+Excluded from ESP32/QEMU builds via `#[cfg(not(feature = "esp32"))]`.
 
 ## Known Limitations
 

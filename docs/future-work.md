@@ -30,20 +30,21 @@ Flash to actual ESP32 hardware and verify:
 
 ### 4. Two-Node Integration Test
 
-Create an integration test that verifies end-to-end communication between two nodes via testnet:
+**Partially Resolved (2026-01)** - The `Node` abstraction in `src/node.rs` provides a testable node interface that encapsulates Transport, identity, destination, and event processing.
 
-1. **Refactor node logic** - Extract core transport/messaging from `src/bin/node.rs` into a library function that takes channels instead of stdin
-2. **Create test harness** - Spawn two node instances in the same test process
-3. **Test scenario**:
-   - Both nodes connect to testnet
-   - Both create destinations and announce
-   - Node A receives Node B's announce
-   - Node A creates link to Node B
-   - Node A sends message via link
-   - Verify Node B receives the message
-4. Mark test as `#[ignore]` since it requires network connectivity
+The test (`test_two_node_communication`) is currently `#[ignore]` due to a testnet routing issue: when two nodes connect from the same IP address, the testnet server appears unable to route directed packets (like link requests) to the correct client. Broadcast packets (announces) work fine.
 
-This would validate the full communication path without manual testing.
+**Next steps:**
+- Investigate if this is a reticulum-rs library limitation or testnet server behavior
+- Consider testing with two separate processes or machines
+- May need patches to reticulum-rs interface management
+
+Run manually with:
+```bash
+cargo test test_two_node -- --ignored --nocapture
+```
+
+Excluded from ESP32/QEMU builds via `#[cfg(not(feature = "esp32"))]`.
 
 ---
 
