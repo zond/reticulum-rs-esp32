@@ -6,9 +6,7 @@ Items planned for future implementation. See also [implementation-guide.md](impl
 
 ### 1. Hardware Testing (LoRa)
 
-✅ **Interface adapter implemented** - See `src/lora/iface.rs`.
-
-The `LoRaInterface` implements reticulum's Interface trait and bridges the radio with transport channels. Remaining work:
+The `LoRaInterface` in `src/lora/iface.rs` implements reticulum's Interface trait. Remaining work:
 1. Test on actual ESP32 hardware with LILYGO T3-S3 board
 2. Verify SPI and GPIO pin assignments match the board
 3. Validate LoRa TX/RX through the transport layer
@@ -23,7 +21,6 @@ BLE fragmentation (`src/ble/fragmentation.rs`) is complete. Need to:
 ### 3. Hardware Testing
 
 Flash to actual ESP32 hardware and verify:
-- ✅ WiFi connection - Auto-configures from NVS (`cargo configure-wifi`)
 - Testnet connectivity (requires WiFi config first)
 - Stats endpoint accessibility
 - Identity persistence across reboots
@@ -56,7 +53,6 @@ The BLE GATT service (`src/config/ble_service.rs`) currently only configures WiF
 
 | Setting | Description | Priority |
 |---------|-------------|----------|
-| WiFi credentials | SSID and password | Done |
 | Testnet server | Which testnet entry point to use | High |
 | Announce filtering | Whether gateway filters internet→mesh announces (see [scalable-routing-proposal.md](scalable-routing-proposal.md)) | High |
 | LoRa region | EU868, US915, etc. | Medium |
@@ -93,23 +89,11 @@ When implemented, the BLE configuration should allow:
 - Configuring DHT bootstrap nodes
 - Setting local mesh identifier
 
-## Interrupt-Driven Radio
-
-✅ **Resolved (2026-01)** - The LoRa radio driver now uses interrupt-driven waiting instead of polling. DIO1 is configured for positive edge interrupts, and `wait_tx_done()` / `wait_rx_done()` block on a FreeRTOS notification instead of polling every 1ms. See `src/lora/radio.rs` and [docs/interrupt-driven-radio-plan.md](interrupt-driven-radio-plan.md) for implementation details.
-
 ## Test Infrastructure Improvements
-
-From code review (2026-01):
 
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
 | Configurable flash size | Hardcoded 4MB flash size in test runner | Low |
-
-**Resolved (2026-01)**:
-- ✅ Cargo JSON metadata - Uses `--message-format=json` for deterministic test binary detection
-- ✅ Cross-platform monitor - Now uses `espflash monitor --non-interactive` instead of macOS-specific `script` wrapper
-- ✅ Crash detection state machine - Uses `TestState` enum (Booting/Initialized/Running) for context-aware crash detection
-- ✅ Port detection glob optimization - Uses specific `/dev/ttyUSB*` and `/dev/ttyACM*` patterns instead of `/dev/tty*` filtering
 
 ## Chat Interface Improvements
 
@@ -126,8 +110,3 @@ The serial chat interface (`src/chat.rs`, `src/bin/node.rs`) has known limitatio
 | Improvement | Description | Priority |
 |-------------|-------------|----------|
 | Platform-specific stdin | Use non-blocking stdin on host for clean shutdown | Low |
-
-**Resolved (2026-01)**:
-- ✅ Batch broadcast sends - Packets collected first, then sent in single transport lock
-- ✅ O(1) LRU eviction - Evaluated; current O(n) scan takes <1μs at 100 entries, LRU crates don't fit the data model well (need sequential indexing + multi-field structs)
-
