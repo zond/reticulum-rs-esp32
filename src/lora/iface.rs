@@ -50,6 +50,13 @@ const RX_TIMEOUT_MS: u32 = 50;
 /// Delay after an error before retrying (ms).
 const ERROR_BACKOFF_MS: u64 = 100;
 
+/// Maximum consecutive task panics before shutting down the interface.
+///
+/// If spawn_blocking tasks panic repeatedly, something is seriously wrong
+/// (likely hardware issue or memory corruption). We shut down gracefully
+/// rather than continue in a potentially corrupted state.
+const MAX_CONSECUTIVE_PANICS: u32 = 3;
+
 /// LoRa interface adapter for reticulum-rs transport.
 ///
 /// This struct wraps the low-level radio driver and adapts it to the
@@ -87,7 +94,7 @@ impl<'d> LoRaInterface<'d> {
     /// 3. Polls for incoming packets from the radio
     /// 4. Forwards received packets to the transport
     ///
-    /// The loop runs until cancellation is signaled.
+    /// The loop runs until cancellation is signaled or too many panics occur.
     pub async fn spawn(context: InterfaceContext<LoRaInterface<'d>>)
     where
         'd: 'static,
@@ -98,10 +105,23 @@ impl<'d> LoRaInterface<'d> {
         // Split the channel to get ownership of sender/receiver
         let (rx_channel, mut tx_channel) = context.channel.split();
 
+        // Track consecutive panics to detect persistent hardware issues
+        let mut consecutive_panics: u32 = 0;
+
         loop {
             // Check for cancellation
             if context.cancel.is_cancelled() {
                 info!("LoRa interface shutting down");
+                break;
+            }
+
+            // Check for too many consecutive panics
+            if consecutive_panics >= MAX_CONSECUTIVE_PANICS {
+                error!(
+                    "LoRa interface shutting down after {} consecutive task panics - \
+                     possible hardware issue or memory corruption",
+                    consecutive_panics
+                );
                 break;
             }
 
@@ -135,14 +155,19 @@ impl<'d> LoRaInterface<'d> {
                 match result {
                     Ok(Ok(())) => {
                         debug!("LoRa TX complete");
+                        consecutive_panics = 0; // Reset on success
                     }
                     Ok(Err(e)) => {
                         warn!("LoRa TX error: {}", e);
+                        consecutive_panics = 0; // Radio responded, just an error
                     }
                     Err(e) => {
-                        // Task panicked - this is serious but we try to continue
-                        // TODO: Consider radio reinitialization on repeated panics
-                        error!("LoRa TX task panicked: {}", e);
+                        consecutive_panics += 1;
+                        error!(
+                            "LoRa TX task panicked ({}/{}): {}",
+                            consecutive_panics, MAX_CONSECUTIVE_PANICS, e
+                        );
+                        tokio::time::sleep(Duration::from_millis(ERROR_BACKOFF_MS)).await;
                     }
                 }
 
@@ -170,21 +195,26 @@ impl<'d> LoRaInterface<'d> {
 
             match rx_result {
                 Ok(Ok(Some(received))) => {
+                    consecutive_panics = 0; // Reset on success
                     if let Err(e) = handle_rx_packet(&rx_channel, iface_address, received).await {
                         warn!("Failed to forward RX packet: {}", e);
                     }
                 }
                 Ok(Ok(None)) => {
                     // No packet received, normal operation
+                    consecutive_panics = 0; // Radio responded normally
                 }
                 Ok(Err(e)) => {
                     warn!("LoRa RX error: {}", e);
-                    // Brief delay on error to avoid tight loop
+                    consecutive_panics = 0; // Radio responded, just an error
                     tokio::time::sleep(Duration::from_millis(ERROR_BACKOFF_MS)).await;
                 }
                 Err(e) => {
-                    // Task panicked
-                    error!("LoRa RX task panicked: {}", e);
+                    consecutive_panics += 1;
+                    error!(
+                        "LoRa RX task panicked ({}/{}): {}",
+                        consecutive_panics, MAX_CONSECUTIVE_PANICS, e
+                    );
                     tokio::time::sleep(Duration::from_millis(ERROR_BACKOFF_MS)).await;
                 }
             }
