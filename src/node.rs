@@ -37,6 +37,12 @@ use tokio::sync::{broadcast, Mutex};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+/// Type alias for the link map to reduce type complexity.
+type LinkMap = Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>;
+
+/// Type alias for the destination map.
+type DestinationMap = Arc<Mutex<HashMap<AddressHash, DestinationDesc>>>;
+
 /// Error type for Node operations.
 #[derive(Debug)]
 pub enum NodeError {
@@ -94,9 +100,9 @@ pub struct Node {
     /// Our address hash.
     address_hash: AddressHash,
     /// Active links by destination hash.
-    links: Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>,
+    links: LinkMap,
     /// Known destination descriptors (from announces).
-    known_destinations: Arc<Mutex<HashMap<AddressHash, DestinationDesc>>>,
+    known_destinations: DestinationMap,
     /// Channel for incoming messages.
     message_tx: broadcast::Sender<IncomingMessage>,
     /// Channel for announce notifications.
@@ -428,7 +434,7 @@ impl Drop for Node {
 async fn handle_link_event(
     event: reticulum::destination::link::LinkEventData,
     direction: &str,
-    links: &Arc<Mutex<HashMap<AddressHash, Arc<Mutex<Link>>>>>,
+    links: &LinkMap,
     message_tx: &broadcast::Sender<IncomingMessage>,
     link_activation_tx: &broadcast::Sender<LinkActivationEvent>,
 ) {
