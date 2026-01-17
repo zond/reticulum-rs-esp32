@@ -12,7 +12,8 @@
 // This binary only runs on the host, not on ESP32
 #![cfg(not(target_os = "espidf"))]
 
-use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_and_monitor};
+use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_and_monitor_output, FlashError};
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::process::{exit, Command};
 
@@ -82,8 +83,28 @@ fn main() {
     println!("\n=== Flashing to device ({}) ===\n", port);
 
     let binary_path = PathBuf::from("target/xtensa-esp32-espidf/release/configure-wifi");
-    if let Err(e) = flash_and_monitor(&binary_path, &port, CHIP) {
-        eprintln!("\nFlash failed: {}", e);
-        exit(1);
+
+    // Flash and monitor until configuration completes (30 second timeout)
+    let result = flash_and_monitor_output(&binary_path, &port, CHIP, 30, |line| {
+        println!("{}", line);
+        if line.contains("=== Done") {
+            ControlFlow::Break(Ok(()))
+        } else if line.contains("Error:") || line.contains("=== Configuration failed ===") {
+            ControlFlow::Break(Err(FlashError::CommandFailed(
+                "Device reported error".to_string(),
+            )))
+        } else {
+            ControlFlow::Continue(())
+        }
+    });
+
+    match result {
+        Ok(()) => {
+            println!("\n=== WiFi configuration complete ===");
+        }
+        Err(e) => {
+            eprintln!("\nConfiguration failed: {}", e);
+            exit(1);
+        }
     }
 }

@@ -10,15 +10,16 @@
 #![cfg(not(target_os = "espidf"))]
 
 use reticulum_rs_esp32::host_utils::{
-    find_esp32_port, find_qemu, flash_binary, list_available_ports, start_monitor,
+    find_esp32_port, find_qemu, flash_binary, list_available_ports, monitor_output, start_monitor,
+    ProcessGuard, TerminalGuard,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use std::process::{exit, Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{exit, Command, Stdio};
 
 const TEST_TIMEOUT_SECS: u64 = 120;
 const RUST_TARGET: &str = "xtensa-esp32-espidf";
@@ -58,23 +59,6 @@ impl Target {
     }
 }
 
-/// RAII guard to ensure child process is always cleaned up.
-struct ProcessGuard(Child);
-
-impl Drop for ProcessGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// Reset terminal to sane state after espflash monitor may have corrupted it.
-/// espflash can leave terminal in raw mode where \n doesn't return to column 0.
-fn reset_terminal() {
-    // Use stty sane to reset terminal settings
-    let _ = Command::new("stty").arg("sane").status();
-}
-
 /// Calculate SHA256 hash of a file.
 fn hash_file(path: &Path) -> Result<String, std::io::Error> {
     let data = fs::read(path)?;
@@ -110,10 +94,16 @@ fn needs_reflash(binary_path: &Path) -> bool {
 }
 
 /// Save hash after successful flash.
+///
+/// Uses atomic write (temp file + rename) to prevent corruption if interrupted.
 fn save_flash_hash(binary_path: &Path) {
     if let Ok(hash) = hash_file(binary_path) {
         let cache_path = hash_cache_path(binary_path);
-        let _ = fs::write(cache_path, hash);
+        let temp_path = cache_path.with_extension("tmp");
+        // Write to temp file, then atomically rename
+        if fs::write(&temp_path, &hash).is_ok() {
+            let _ = fs::rename(temp_path, cache_path);
+        }
     }
 }
 
@@ -243,7 +233,7 @@ fn run_qemu_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Error>> 
         .ok_or("Failed to capture stdout from QEMU")?;
     let _guard = ProcessGuard(process);
 
-    monitor_test_output(stdout)
+    run_test_monitor(stdout)
 }
 
 fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -275,6 +265,9 @@ fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Erro
     // Monitor for test output (espflash monitor does a hard-reset by default)
     println!("=== Monitoring test output ===\n");
 
+    // TerminalGuard ensures terminal is reset even if we panic or exit early
+    let _term_guard = TerminalGuard;
+
     let mut process =
         start_monitor(&port).map_err(|e| format!("Failed to start monitor: {}", e))?;
 
@@ -283,16 +276,10 @@ fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Erro
         .take()
         .ok_or("Failed to capture stdout from espflash monitor")?;
 
-    let result = monitor_test_output(stdout);
+    // ProcessGuard ensures cleanup even if run_test_monitor panics
+    let _process_guard = ProcessGuard(process);
 
-    // Kill espflash monitor gracefully before it panics from broken pipe
-    let _ = process.kill();
-    let _ = process.wait();
-
-    // Reset terminal after espflash monitor (it may leave terminal in raw mode)
-    reset_terminal();
-
-    result
+    run_test_monitor(stdout)
 }
 
 /// Test execution state machine for context-aware crash detection.
@@ -306,46 +293,18 @@ enum TestState {
     Running,
 }
 
-fn monitor_test_output(stdout: impl std::io::Read) -> Result<(), Box<dyn std::error::Error>> {
-    let mut reader = BufReader::new(stdout);
+/// Result from test monitoring.
+enum TestResult {
+    Passed,
+    Failed,
+    Crashed(String),
+}
 
-    let start = Instant::now();
-    let timeout = Duration::from_secs(TEST_TIMEOUT_SECS);
-    let mut test_result: Option<bool> = None;
+fn run_test_monitor(stdout: impl std::io::Read) -> Result<(), Box<dyn std::error::Error>> {
     let mut test_state = TestState::Booting;
-    let mut crash_reason: Option<String> = None;
+    let mut test_result: Option<TestResult> = None;
 
-    let mut buf = Vec::new();
-    loop {
-        buf.clear();
-
-        if start.elapsed() > timeout {
-            eprintln!(
-                "\nTimeout: tests ran for more than {} seconds",
-                TEST_TIMEOUT_SECS
-            );
-            return Err("Test timeout".into());
-        }
-
-        // Read until newline, handling binary data gracefully
-        match reader.read_until(b'\n', &mut buf) {
-            Ok(0) => break, // EOF
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Read error: {}", e);
-                break;
-            }
-        }
-
-        // Convert to string, replacing invalid UTF-8 with replacement char.
-        // Also strip \r characters (ESP32 uses \r\n line endings which cause display issues).
-        let line = String::from_utf8_lossy(&buf).trim().replace('\r', "");
-
-        // Skip empty lines and lines that are just garbage
-        if line.is_empty() || line.chars().all(|c| c == '\u{FFFD}' || c.is_control()) {
-            continue;
-        }
-
+    let monitor_result: Result<(), String> = monitor_output(stdout, TEST_TIMEOUT_SECS, |line| {
         // Update test state based on output
         if line.contains("running") && line.contains("tests") {
             test_state = TestState::Initialized;
@@ -355,8 +314,7 @@ fn monitor_test_output(stdout: impl std::io::Read) -> Result<(), Box<dyn std::er
         }
 
         // Print test-relevant output (once initialized or running)
-        // Use explicit \r\n because espflash may leave terminal in raw mode where \n alone
-        // doesn't return to column 0.
+        // Use explicit \r\n because espflash may leave terminal in raw mode
         if test_state != TestState::Booting {
             print!("{}\r\n", line);
             let _ = std::io::stdout().flush();
@@ -364,33 +322,48 @@ fn monitor_test_output(stdout: impl std::io::Read) -> Result<(), Box<dyn std::er
 
         // Check for test completion
         if line.contains("test result:") {
-            if line.contains("ok") && !line.contains("FAILED") {
-                test_result = Some(true);
+            test_result = if line.contains("ok") && !line.contains("FAILED") {
+                Some(TestResult::Passed)
             } else {
-                test_result = Some(false);
-            }
-            break;
+                Some(TestResult::Failed)
+            };
+            return ControlFlow::Break(Ok(()));
         }
 
         // Check for crash patterns with state context
-        if let Some(reason) = check_crash_pattern(&line, test_state) {
-            crash_reason = Some(reason);
-            test_result = Some(false);
-            break;
+        if let Some(reason) = check_crash_pattern(line, test_state) {
+            test_result = Some(TestResult::Crashed(reason));
+            return ControlFlow::Break(Ok(()));
         }
-    }
 
-    if let Some(reason) = crash_reason {
-        eprint!("\r\n*** TEST CRASHED: {} ***\r\n", reason);
+        ControlFlow::Continue(())
+    });
+
+    // Handle timeout or other monitor errors
+    if let Err(e) = monitor_result {
+        let message = if e.contains("Timeout") {
+            format!(
+                "Timeout: tests ran for more than {} seconds",
+                TEST_TIMEOUT_SECS
+            )
+        } else {
+            e
+        };
+        eprintln!("\n{}", message);
+        return Err(message.into());
     }
 
     print!("\r\n");
     match test_result {
-        Some(true) => {
+        Some(TestResult::Passed) => {
             print!("=== All tests passed ===\r\n");
             Ok(())
         }
-        Some(false) => Err("Tests failed".into()),
+        Some(TestResult::Failed) => Err("Tests failed".into()),
+        Some(TestResult::Crashed(reason)) => {
+            eprint!("*** TEST CRASHED: {} ***\r\n", reason);
+            Err("Tests failed".into())
+        }
         None => Err("Could not determine test result".into()),
     }
 }
