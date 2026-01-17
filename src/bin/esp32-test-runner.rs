@@ -14,8 +14,6 @@ use reticulum_rs_esp32::host_utils::{
     ProcessGuard, TerminalGuard,
 };
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use std::fs;
 use std::io::Write;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
@@ -55,54 +53,6 @@ impl Target {
         match self {
             Target::Qemu => "QEMU",
             Target::Hardware => "ESP32",
-        }
-    }
-}
-
-/// Calculate SHA256 hash of a file.
-fn hash_file(path: &Path) -> Result<String, std::io::Error> {
-    let data = fs::read(path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-/// Get path to the hash cache file for a given binary.
-fn hash_cache_path(binary_path: &Path) -> PathBuf {
-    let parent = binary_path.parent().unwrap_or(Path::new("."));
-    parent.join(".last_flashed_hash")
-}
-
-/// Check if binary needs to be reflashed by comparing hashes.
-/// Returns true if flash is needed (hash mismatch or no cached hash).
-fn needs_reflash(binary_path: &Path) -> bool {
-    let cache_path = hash_cache_path(binary_path);
-
-    // Calculate current binary hash
-    let current_hash = match hash_file(binary_path) {
-        Ok(h) => h,
-        Err(_) => return true, // Can't read binary, need to flash
-    };
-
-    // Read cached hash
-    let cached_hash = match fs::read_to_string(&cache_path) {
-        Ok(h) => h.trim().to_string(),
-        Err(_) => return true, // No cache, need to flash
-    };
-
-    current_hash != cached_hash
-}
-
-/// Save hash after successful flash.
-///
-/// Uses atomic write (temp file + rename) to prevent corruption if interrupted.
-fn save_flash_hash(binary_path: &Path) {
-    if let Ok(hash) = hash_file(binary_path) {
-        let cache_path = hash_cache_path(binary_path);
-        let temp_path = cache_path.with_extension("tmp");
-        // Write to temp file, then atomically rename
-        if fs::write(&temp_path, &hash).is_ok() {
-            let _ = fs::rename(temp_path, cache_path);
         }
     }
 }
@@ -253,19 +203,14 @@ fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Erro
     };
     println!("Found device: {}", port);
 
-    // Check if we need to reflash (binary changed since last flash)
-    if needs_reflash(test_binary) {
-        println!("\n=== Flashing to ESP32 ===\n");
-        flash_binary(test_binary, &port, CHIP).map_err(|e| format!("Flash failed: {}", e))?;
-        save_flash_hash(test_binary);
-    } else {
-        println!("\n=== Binary unchanged, skipping flash (reset only) ===\n");
-    }
+    // Always flash - espflash automatically skips unchanged segments
+    println!("\n=== Flashing to ESP32 ===\n");
+    flash_binary(test_binary, &port, CHIP).map_err(|e| format!("Flash failed: {}", e))?;
 
     // Monitor for test output (espflash monitor does a hard-reset by default)
-    println!("=== Monitoring test output ===\n");
+    println!("\n=== Monitoring test output ===\n");
 
-    // TerminalGuard ensures terminal is reset even if we panic or exit early
+    // TerminalGuard resets terminal state on exit (defensive - may not be needed with piped output)
     let _term_guard = TerminalGuard;
 
     let mut process =

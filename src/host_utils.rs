@@ -11,6 +11,7 @@ use std::process::{Child, Command, Stdio};
 const MAX_OUTPUT_LINES: usize = 100_000;
 
 /// RAII guard to ensure child process is always cleaned up.
+#[must_use = "ProcessGuard must be held to ensure process cleanup"]
 pub struct ProcessGuard(pub Child);
 
 impl Drop for ProcessGuard {
@@ -24,6 +25,7 @@ impl Drop for ProcessGuard {
 ///
 /// espflash monitor can leave the terminal in raw mode. This guard
 /// ensures `stty sane` is called when the guard is dropped.
+#[must_use = "TerminalGuard must be held to ensure terminal restoration"]
 pub struct TerminalGuard;
 
 impl Drop for TerminalGuard {
@@ -104,28 +106,45 @@ pub fn flash_binary(binary_path: &Path, port: &str, chip: &str) -> Result<(), Fl
     }
 }
 
-/// Flash a binary with monitoring (for utilities that need to see output).
+/// Flash a binary with interactive monitoring.
 ///
-/// Shows progress bar, then enters monitor mode.
+/// Flashes the binary, then monitors serial output indefinitely until
+/// the user presses Ctrl+C. All output is printed to stdout.
 pub fn flash_and_monitor(binary_path: &Path, port: &str, chip: &str) -> Result<(), FlashError> {
-    let status = Command::new("espflash")
-        .args([
-            "flash",
-            "--monitor",
-            "--chip",
-            chip,
-            "--port",
-            port,
-            &binary_path.to_string_lossy(),
-        ])
-        .status()
-        .map_err(|e| FlashError::CommandFailed(e.to_string()))?;
+    use std::io::Write;
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(FlashError::FlashFailed)
-    }
+    flash_binary(binary_path, port, chip)?;
+
+    println!("\n=== Monitoring (Ctrl+C to exit) ===\n");
+
+    // Monitor with long timeout - user exits with Ctrl+C.
+    // 1 hour timeout prevents resource leaks if user forgets about it.
+    // Ignore errors since any exit (Ctrl+C, timeout, pipe close) is expected.
+    let _ = flash_and_monitor_impl(port, 3600, |line| {
+        print!("{}\r\n", line);
+        let _ = std::io::stdout().flush();
+        std::ops::ControlFlow::Continue(())
+    });
+
+    Ok(())
+}
+
+/// Internal monitor implementation used by both flash_and_monitor and flash_and_monitor_output.
+fn flash_and_monitor_impl<F>(port: &str, timeout_secs: u64, on_line: F) -> Result<(), FlashError>
+where
+    F: FnMut(&str) -> std::ops::ControlFlow<Result<(), FlashError>>,
+{
+    let process = start_monitor(port)?;
+    // Create guard IMMEDIATELY to ensure cleanup even if stdout.take() fails
+    let mut guard = ProcessGuard(process);
+
+    let stdout = guard
+        .0
+        .stdout
+        .take()
+        .ok_or_else(|| FlashError::CommandFailed("Failed to capture stdout".to_string()))?;
+
+    monitor_output(stdout, timeout_secs, on_line)
 }
 
 /// Start monitoring an ESP32 device, returning the process for output capture.
@@ -202,6 +221,8 @@ where
     let timeout = Duration::from_secs(timeout_secs);
     let mut buf = Vec::new();
     let mut line_count: usize = 0;
+    let mut consecutive_errors: u32 = 0;
+    const MAX_CONSECUTIVE_ERRORS: u32 = 10;
 
     loop {
         buf.clear();
@@ -221,12 +242,23 @@ where
         // Read until newline, handling binary data gracefully
         match reader.read_until(b'\n', &mut buf) {
             Ok(0) => return Err(E::from("Monitor ended without completion".to_string())),
-            Ok(_) => {}
+            Ok(_) => {
+                consecutive_errors = 0; // Reset on success
+            }
             Err(e) => {
-                // Log I/O errors but continue (may be transient)
-                if e.kind() != std::io::ErrorKind::Interrupted {
-                    debug!("I/O error reading output: {}", e);
+                if e.kind() == std::io::ErrorKind::Interrupted {
+                    continue; // Interrupted is transient, retry immediately
                 }
+
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                    return Err(E::from(format!(
+                        "Too many consecutive I/O errors ({}), last: {}",
+                        MAX_CONSECUTIVE_ERRORS, e
+                    )));
+                }
+
+                debug!("I/O error reading output ({}/{}): {}", consecutive_errors, MAX_CONSECUTIVE_ERRORS, e);
                 continue;
             }
         }
@@ -284,18 +316,11 @@ pub fn flash_and_monitor_output<F>(
 where
     F: FnMut(&str) -> std::ops::ControlFlow<Result<(), FlashError>>,
 {
-    // Flash the binary
+    // Flash the binary (espflash skips unchanged segments automatically)
     flash_binary(binary_path, port, chip)?;
 
-    // Start monitoring - ProcessGuard ensures cleanup on any exit path
-    let mut process = start_monitor(port)?;
-    let stdout = process
-        .stdout
-        .take()
-        .ok_or_else(|| FlashError::CommandFailed("Failed to capture stdout".to_string()))?;
-
-    let _guard = ProcessGuard(process);
-    monitor_output(stdout, timeout_secs, on_line)
+    // Monitor with callback
+    flash_and_monitor_impl(port, timeout_secs, on_line)
 }
 
 /// Errors that can occur during flash operations.
