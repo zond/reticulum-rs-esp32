@@ -34,9 +34,65 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Result from port detection.
+pub enum PortResult {
+    /// Single port found or PORT env var specified.
+    Found(String),
+    /// Multiple ports found, user must specify PORT env var.
+    MultipleDevices(Vec<String>),
+    /// No devices found.
+    NotFound,
+}
+
+/// Get ESP32 serial port from PORT environment variable or auto-detect.
+///
+/// - If PORT env var is set, uses that port directly
+/// - If exactly one device is found, uses it automatically
+/// - If multiple devices are found, returns error requiring PORT to be set
+/// - If no devices are found, returns NotFound
+pub fn get_esp32_port() -> PortResult {
+    // Check PORT environment variable first
+    if let Ok(port) = std::env::var("PORT") {
+        if !port.is_empty() {
+            return PortResult::Found(port);
+        }
+    }
+
+    // Find all available ESP32 ports
+    let ports = find_all_esp32_ports();
+
+    match ports.len() {
+        0 => PortResult::NotFound,
+        1 => PortResult::Found(ports.into_iter().next().unwrap()),
+        _ => PortResult::MultipleDevices(ports),
+    }
+}
+
+/// Find all ESP32 serial ports by scanning common device patterns.
+fn find_all_esp32_ports() -> Vec<String> {
+    let patterns = [
+        "/dev/cu.usbserial-*",
+        "/dev/cu.wchusbserial*",
+        "/dev/cu.SLAB_USBtoUART*",
+        "/dev/ttyUSB*",
+        "/dev/ttyACM*",
+    ];
+
+    let mut ports = Vec::new();
+    for pattern in patterns {
+        if let Ok(paths) = glob::glob(pattern) {
+            for path in paths.flatten() {
+                ports.push(path.to_string_lossy().to_string());
+            }
+        }
+    }
+    ports
+}
+
 /// Find an ESP32 serial port by scanning common device patterns.
 ///
 /// Returns the first matching port, or None if no device is found.
+/// Prefer `get_esp32_port()` which also checks the PORT environment variable.
 pub fn find_esp32_port() -> Option<String> {
     let patterns = [
         "/dev/cu.usbserial-*",
@@ -258,7 +314,10 @@ where
                     )));
                 }
 
-                debug!("I/O error reading output ({}/{}): {}", consecutive_errors, MAX_CONSECUTIVE_ERRORS, e);
+                debug!(
+                    "I/O error reading output ({}/{}): {}",
+                    consecutive_errors, MAX_CONSECUTIVE_ERRORS, e
+                );
                 continue;
             }
         }

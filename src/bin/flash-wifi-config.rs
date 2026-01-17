@@ -13,7 +13,7 @@
 #![cfg(not(target_os = "espidf"))]
 
 use reticulum_rs_esp32::host_utils::{
-    find_esp32_port, flash_and_monitor_output, FlashError, TerminalGuard,
+    flash_and_monitor_output, get_esp32_port, FlashError, PortResult, TerminalGuard,
 };
 use std::io::Write;
 use std::ops::ControlFlow;
@@ -74,11 +74,20 @@ fn main() {
         exit(1);
     }
 
-    // Auto-detect ESP32 port
-    let port = match find_esp32_port() {
-        Some(p) => p,
-        None => {
+    // Get ESP32 port (PORT env var or auto-detect)
+    let port = match get_esp32_port() {
+        PortResult::Found(p) => p,
+        PortResult::MultipleDevices(ports) => {
+            eprintln!("\nMultiple ESP32 devices found:");
+            for port in &ports {
+                eprintln!("  {}", port);
+            }
+            eprintln!("\nSet PORT environment variable to specify which device to use.");
+            exit(1);
+        }
+        PortResult::NotFound => {
             eprintln!("\nNo ESP32 device found. Check USB connection.");
+            eprintln!("Tip: Set PORT environment variable to specify device.");
             exit(1);
         }
     };

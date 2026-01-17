@@ -10,8 +10,8 @@
 #![cfg(not(target_os = "espidf"))]
 
 use reticulum_rs_esp32::host_utils::{
-    find_esp32_port, find_qemu, flash_binary, list_available_ports, monitor_output, start_monitor,
-    ProcessGuard, TerminalGuard,
+    find_qemu, flash_binary, get_esp32_port, list_available_ports, monitor_output, start_monitor,
+    PortResult, ProcessGuard, TerminalGuard,
 };
 use serde::Deserialize;
 use std::io::Write;
@@ -187,13 +187,23 @@ fn run_qemu_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    // Find device
-    let port = match find_esp32_port() {
-        Some(p) => p,
-        None => {
+    // Find device (PORT env var or auto-detect)
+    let port = match get_esp32_port() {
+        PortResult::Found(p) => p,
+        PortResult::MultipleDevices(ports) => {
+            eprintln!("Multiple ESP32 devices found:");
+            for port in &ports {
+                eprintln!("  {}", port);
+            }
+            eprintln!("\nSet PORT environment variable to specify which device to use.");
+            return Err("Multiple devices found, set PORT to specify device".into());
+        }
+        PortResult::NotFound => {
             let available = list_available_ports();
+            eprintln!("No ESP32 device found.");
+            eprintln!("Tip: Set PORT environment variable to specify device.");
             if !available.is_empty() {
-                eprintln!("Available serial ports:");
+                eprintln!("\nAvailable serial ports:");
                 for port in &available {
                     eprintln!("  {}", port);
                 }
@@ -201,7 +211,7 @@ fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Erro
             return Err("No ESP32 device found. Check USB connection.".into());
         }
     };
-    println!("Found device: {}", port);
+    println!("Using device: {}", port);
 
     // Always flash - espflash automatically skips unchanged segments
     println!("\n=== Flashing to ESP32 ===\n");

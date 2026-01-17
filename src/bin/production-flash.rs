@@ -8,7 +8,7 @@
 // This binary only runs on the host, not on ESP32
 #![cfg(not(target_os = "espidf"))]
 
-use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_binary};
+use reticulum_rs_esp32::host_utils::{flash_binary, get_esp32_port, PortResult};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::{exit, Command};
@@ -82,11 +82,20 @@ fn main() {
         }
     }
 
-    // Auto-detect ESP32 port
-    let port = match find_esp32_port() {
-        Some(p) => p,
-        None => {
+    // Get ESP32 port (PORT env var or auto-detect)
+    let port = match get_esp32_port() {
+        PortResult::Found(p) => p,
+        PortResult::MultipleDevices(ports) => {
+            eprintln!("\nMultiple ESP32 devices found:");
+            for port in &ports {
+                eprintln!("  {}", port);
+            }
+            eprintln!("\nSet PORT environment variable to specify which device to use.");
+            exit(1);
+        }
+        PortResult::NotFound => {
             eprintln!("\nNo ESP32 device found. Check USB connection.");
+            eprintln!("Tip: Set PORT environment variable to specify device.");
             exit(1);
         }
     };
