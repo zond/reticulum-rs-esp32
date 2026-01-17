@@ -191,7 +191,7 @@ fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Erro
     let port = match get_esp32_port() {
         PortResult::Found(p) => p,
         PortResult::MultipleDevices(ports) => {
-            eprintln!("Multiple ESP32 devices found:");
+            eprintln!("\nMultiple ESP32 devices found:");
             for port in &ports {
                 eprintln!("  {}", port);
             }
@@ -200,7 +200,7 @@ fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Erro
         }
         PortResult::NotFound => {
             let available = list_available_ports();
-            eprintln!("No ESP32 device found.");
+            eprintln!("\nNo ESP32 device found. Check USB connection.");
             eprintln!("Tip: Set PORT environment variable to specify device.");
             if !available.is_empty() {
                 eprintln!("\nAvailable serial ports:");
@@ -208,7 +208,7 @@ fn run_hardware_tests(test_binary: &Path) -> Result<(), Box<dyn std::error::Erro
                     eprintln!("  {}", port);
                 }
             }
-            return Err("No ESP32 device found. Check USB connection.".into());
+            return Err("No ESP32 device found".into());
         }
     };
     println!("Using device: {}", port);

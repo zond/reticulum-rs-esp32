@@ -59,11 +59,11 @@ pub fn get_esp32_port() -> PortResult {
     }
 
     // Find all available ESP32 ports
-    let ports = find_all_esp32_ports();
+    let mut ports = find_all_esp32_ports();
 
     match ports.len() {
         0 => PortResult::NotFound,
-        1 => PortResult::Found(ports.into_iter().next().unwrap()),
+        1 => PortResult::Found(ports.swap_remove(0)),
         _ => PortResult::MultipleDevices(ports),
     }
 }
@@ -82,7 +82,7 @@ fn find_all_esp32_ports() -> Vec<String> {
     for pattern in patterns {
         if let Ok(paths) = glob::glob(pattern) {
             for path in paths.flatten() {
-                ports.push(path.to_string_lossy().to_string());
+                ports.push(path.to_string_lossy().into_owned());
             }
         }
     }
@@ -94,23 +94,7 @@ fn find_all_esp32_ports() -> Vec<String> {
 /// Returns the first matching port, or None if no device is found.
 /// Prefer `get_esp32_port()` which also checks the PORT environment variable.
 pub fn find_esp32_port() -> Option<String> {
-    let patterns = [
-        "/dev/cu.usbserial-*",
-        "/dev/cu.wchusbserial*",
-        "/dev/cu.SLAB_USBtoUART*",
-        "/dev/ttyUSB*",
-        "/dev/ttyACM*",
-    ];
-
-    for pattern in patterns {
-        if let Ok(paths) = glob::glob(pattern) {
-            if let Some(path) = paths.flatten().next() {
-                return Some(path.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
+    find_all_esp32_ports().into_iter().next()
 }
 
 /// List available serial ports for debugging.
@@ -119,14 +103,14 @@ pub fn list_available_ports() -> Vec<String> {
 
     // macOS patterns
     if let Ok(paths) = glob::glob("/dev/cu.*") {
-        available_ports.extend(paths.flatten().map(|p| p.to_string_lossy().to_string()));
+        available_ports.extend(paths.flatten().map(|p| p.to_string_lossy().into_owned()));
     }
 
     // Linux USB serial patterns (more specific than /dev/tty* to avoid iterating
     // over hundreds of virtual terminals)
     for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*"] {
         if let Ok(paths) = glob::glob(pattern) {
-            available_ports.extend(paths.flatten().map(|p| p.to_string_lossy().to_string()));
+            available_ports.extend(paths.flatten().map(|p| p.to_string_lossy().into_owned()));
         }
     }
 
