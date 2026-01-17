@@ -12,7 +12,10 @@
 // This binary only runs on the host, not on ESP32
 #![cfg(not(target_os = "espidf"))]
 
-use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_and_monitor_output, FlashError};
+use reticulum_rs_esp32::host_utils::{
+    find_esp32_port, flash_and_monitor_output, FlashError, TerminalGuard,
+};
+use std::io::Write;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::process::{exit, Command};
@@ -84,9 +87,15 @@ fn main() {
 
     let binary_path = PathBuf::from("target/xtensa-esp32-espidf/release/configure-wifi");
 
+    // TerminalGuard ensures terminal is reset even if we panic or exit early
+    // (espflash monitor can leave terminal in raw mode)
+    let _term_guard = TerminalGuard;
+
     // Flash and monitor until configuration completes (30 second timeout)
+    // Use explicit \r\n because espflash may leave terminal in raw mode
     let result = flash_and_monitor_output(&binary_path, &port, CHIP, 30, |line| {
-        println!("{}", line);
+        print!("{}\r\n", line);
+        let _ = std::io::stdout().flush();
         if line.contains("=== Done") {
             ControlFlow::Break(Ok(()))
         } else if line.contains("Error:") || line.contains("=== Configuration failed ===") {
@@ -98,12 +107,13 @@ fn main() {
         }
     });
 
+    print!("\r\n");
     match result {
         Ok(()) => {
-            println!("\n=== WiFi configuration complete ===");
+            print!("=== WiFi configuration complete ===\r\n");
         }
         Err(e) => {
-            eprintln!("\nConfiguration failed: {}", e);
+            eprint!("Configuration failed: {}\r\n", e);
             exit(1);
         }
     }
