@@ -25,6 +25,9 @@ build/
 *.pem
 *.key
 
+# Local device configuration (two-device testing setup)
+.local-devices
+
 # Logs
 *.log
 
