@@ -5,6 +5,9 @@
 //! Flash encryption burns eFuses on first boot. This cannot be undone.
 //! Only use for final production devices.
 
+// This binary only runs on the host, not on ESP32
+#![cfg(not(target_os = "espidf"))]
+
 use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_binary};
 use std::io::{self, Write};
 use std::path::PathBuf;

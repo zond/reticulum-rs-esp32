@@ -6,6 +6,9 @@
 //!   cargo test-qemu      # Run in QEMU emulator
 //!   cargo test-esp32     # Run on real ESP32 hardware
 
+// This binary only runs on the host, not on ESP32
+#![cfg(not(target_os = "espidf"))]
+
 use reticulum_rs_esp32::host_utils::{
     find_esp32_port, find_qemu, flash_binary, list_available_ports, start_monitor,
 };

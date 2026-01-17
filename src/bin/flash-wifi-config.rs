@@ -9,6 +9,9 @@
 //! Or use the cargo alias:
 //!   WIFI_SSID="MyNetwork" WIFI_PASSWORD="secret" cargo configure-wifi
 
+// This binary only runs on the host, not on ESP32
+#![cfg(not(target_os = "espidf"))]
+
 use reticulum_rs_esp32::host_utils::{find_esp32_port, flash_and_monitor};
 use std::path::PathBuf;
 use std::process::{exit, Command};
